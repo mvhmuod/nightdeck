@@ -1008,18 +1008,224 @@
   /* ---------- screenshot ---------- */
   (function () {
     const root = $c("capture"); if (!root) return;
-    const hide = h("input", { type: "checkbox" }); hide.checked = store.get("shothide", true);
-    hide.addEventListener("change", () => store.set("shothide", hide.checked));
-    const last = h("span", { class: "nd-dim", text: "screenshots are saved to Pictures > Nightdeck Screenshots" });
-    const take = btn("take screenshot", async () => {
-      take.disabled = true;
-      try { const r = await api("screenshot", hide.checked); last.textContent = "saved: " + r.file; log("screenshot saved (" + r.width + " x " + r.height + ")"); }
-      catch (e) { last.textContent = "screenshot failed: " + e.message; log("screenshot failed: " + e.message); }
-      take.disabled = false;
+    const dim = t => h("span", { class: "nd-dim", text: t }), sub = t => h("div", { class: "nd-sub", text: t });
+    const two = n => String(n).padStart(2, "0");
+    let cfg = { format: "png", copy: false, hotkey: false, accel: "Control+Alt+P", screen: "", dirShown: "" }, busy = false, sureDel = "";
+    const opt = { hide: !!store.get("shothide", true), edit: !!store.get("shotedit", false), delay: Number(store.get("shotdelay", 0)) || 0 };
+    const status = dim("");
+    const toggle = (label, get, set) => { const b = btn(label, async () => { await set(!get()); b.classList.toggle("nd-on", !!get()); }); b.classList.toggle("nd-on", !!get()); return b; };
+    async function setCfg(o) { try { cfg = await api("capSet", o); } catch (e) { log("capture: " + e.message); } drawCfg(); return cfg; }
+
+    // what to capture
+    const sTarget = h("select", { class: "nd-input", title: "which screen to capture" });
+    sTarget.addEventListener("change", () => { if (sTarget.value !== "all") setCfg({ screen: sTarget.value }); });
+    const sDelay = h("select", { class: "nd-input", title: "wait before capturing" });
+    for (const s of [0, 3, 5, 10]) sDelay.append(h("option", { value: String(s), text: s ? s + " s delay" : "no delay" }));
+    sDelay.value = String(opt.delay); sDelay.addEventListener("change", () => { opt.delay = Number(sDelay.value); store.set("shotdelay", opt.delay); });
+    const bHide = toggle("hide nightdeck", () => opt.hide, v => { opt.hide = v; store.set("shothide", v); });
+    const bEdit = toggle("edit before saving", () => opt.edit, v => { opt.edit = v; store.set("shotedit", v); });
+    const bCopy = toggle("copy to clipboard", () => cfg.copy, v => setCfg({ copy: v }));
+    function fillTargets(screens) {
+      const keep = sTarget.value || cfg.screen; sTarget.textContent = ""; sRec.textContent = "";
+      for (const s of screens) { sTarget.append(h("option", { value: s.id, text: s.label })); if (s.sid) sRec.append(h("option", { value: s.sid, text: s.label })); }
+      if (screens.length > 1) sTarget.append(h("option", { value: "all", text: "all screens in one picture" }));
+      if ([...sTarget.options].some(o => o.value === keep)) sTarget.value = keep;
+    }
+    const loadImg = url => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error("the picture could not be read")); im.src = url; });
+    async function compose(images) { // puts the pictures of several screens side by side as they stand on the desk
+      const minX = Math.min(...images.map(i => i.x)), minY = Math.min(...images.map(i => i.y));
+      const cv = document.createElement("canvas"); cv.width = Math.max(...images.map(i => i.x + i.w)) - minX; cv.height = Math.max(...images.map(i => i.y + i.h)) - minY;
+      const g = cv.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, cv.width, cv.height);
+      for (const i of images) g.drawImage(await loadImg(i.url), i.x - minX, i.y - minY, i.w, i.h);
+      return cv;
+    }
+    function done(r) {
+      status.textContent = "saved: " + r.file + (r.copied ? "  (also copied)" : "");
+      log("screenshot saved (" + r.width + " x " + r.height + ")" + (r.copied ? " and copied" : "")); loadRecent();
+    }
+    async function shoot(kind, id, region) {
+      if (busy) return; busy = true;
+      try {
+        for (let s = opt.delay; s > 0; s--) { status.textContent = "capturing in " + s + " ..."; await new Promise(r => setTimeout(r, 1000)); }
+        status.textContent = "capturing ...";
+        const edit = region || opt.edit;
+        if (!edit && kind !== "all") done(await api("capShot", { kind, id, hide: opt.hide }));
+        else {
+          const cv = await compose((await api("capGrab", { kind, id, hide: opt.hide })).images);
+          if (edit) openEditor(cv, region ? "crop" : "arrow"); else done(await api("capSave", cv.toDataURL("image/png")));
+        }
+      } catch (e) { status.textContent = "capture failed: " + e.message; log("screenshot failed: " + e.message); }
+      busy = false;
+    }
+    const target = () => sTarget.value === "all" ? ["all", ""] : ["screen", sTarget.value];
+    const bShot = btn("take screenshot", () => shoot(...target(), false), "nd-on");
+    const bRegion = btn("select a region", () => shoot(...target(), true));
+
+    // single window
+    const picker = h("div", { class: "nd-wpick" }); picker.style.display = "none";
+    const bWin = btn("pick a window", async () => {
+      const show = picker.style.display === "none"; picker.style.display = show ? "" : "none"; bWin.classList.toggle("nd-on", show);
+      if (!show) return;
+      picker.textContent = ""; picker.append(dim("reading the open windows ..."));
+      try {
+        const s = await api("capSources", true); picker.textContent = "";
+        if (!s.windows.length) picker.append(dim("no capturable windows found - minimised windows do not show up"));
+        for (const w of s.windows) {
+          const b = h("button", { class: "nd-btn nd-wthumb", title: w.name }, h("img", { src: w.thumb, alt: "" }), h("span", { text: w.name }));
+          b.addEventListener("click", () => { picker.style.display = "none"; bWin.classList.remove("nd-on"); shoot("window", w.sid, false); });
+          picker.append(b);
+        }
+      } catch (e) { picker.textContent = ""; picker.append(dim(e.message)); }
+    });
+
+    // editor: cut out a region, draw arrows, boxes and text, then save
+    const ed = h("div", { class: "nd-ed" }); ed.style.display = "none";
+    const edCv = h("canvas", { class: "nd-edcv" }), edText = h("input", { class: "nd-input", placeholder: "text to place", maxlength: "80", size: "18" });
+    let base = null, shapes = [], crop = null, tool = "arrow", color = "#ff4d4d", drag = null;
+    const lw = () => Math.max(3, Math.round(base.width / 450)), fsz = () => Math.max(18, Math.round(base.width / 45));
+    function drawShapes(g, k, list) {
+      for (const s of list) {
+        g.strokeStyle = g.fillStyle = s.color; g.lineWidth = Math.max(1.5, lw() * k); g.lineCap = "round"; g.lineJoin = "round"; g.setLineDash([]);
+        if (s.type === "box") g.strokeRect(Math.min(s.x1, s.x2) * k, Math.min(s.y1, s.y2) * k, Math.abs(s.x2 - s.x1) * k, Math.abs(s.y2 - s.y1) * k);
+        else if (s.type === "arrow") {
+          const a = Math.atan2(s.y2 - s.y1, s.x2 - s.x1), hl = lw() * 5 * k;
+          g.beginPath(); g.moveTo(s.x1 * k, s.y1 * k); g.lineTo(s.x2 * k, s.y2 * k);
+          g.moveTo(s.x2 * k - hl * Math.cos(a - 0.45), s.y2 * k - hl * Math.sin(a - 0.45)); g.lineTo(s.x2 * k, s.y2 * k); g.lineTo(s.x2 * k - hl * Math.cos(a + 0.45), s.y2 * k - hl * Math.sin(a + 0.45)); g.stroke();
+        } else if (s.type === "text") {
+          g.font = "600 " + fsz() * k + "px 'Segoe UI', Arial, sans-serif"; g.textBaseline = "top"; g.lineWidth = Math.max(2, fsz() * k / 7); g.strokeStyle = "rgba(0,0,0,.75)";
+          g.strokeText(s.text, s.x1 * k, s.y1 * k); g.fillText(s.text, s.x1 * k, s.y1 * k);
+        }
+      }
+    }
+    const norm = d => ({ x: Math.round(Math.min(d.x1, d.x2)), y: Math.round(Math.min(d.y1, d.y2)), w: Math.round(Math.abs(d.x2 - d.x1)), h: Math.round(Math.abs(d.y2 - d.y1)) });
+    function drawEd() {
+      if (!base) return;
+      const W = Math.max(200, ed.clientWidth || 440), k = W / base.width, H = Math.round(base.height * k), dpr = window.devicePixelRatio || 1;
+      edCv.style.height = H + "px"; edCv.width = Math.round(W * dpr); edCv.height = Math.round(H * dpr);
+      const g = edCv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.drawImage(base, 0, 0, W, H);
+      drawShapes(g, k, drag && tool !== "crop" ? shapes.concat([Object.assign({ type: tool, color }, drag)]) : shapes);
+      const c = drag && tool === "crop" ? norm(drag) : crop;
+      if (c && c.w > 2 && c.h > 2) { // everything outside the chosen region is dimmed
+        g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(0, 0, W, c.y * k); g.fillRect(0, (c.y + c.h) * k, W, H - (c.y + c.h) * k);
+        g.fillRect(0, c.y * k, c.x * k, c.h * k); g.fillRect((c.x + c.w) * k, c.y * k, W - (c.x + c.w) * k, c.h * k);
+        g.setLineDash([5, 4]); g.lineWidth = 1; g.strokeStyle = "#9bd64a"; g.strokeRect(c.x * k + .5, c.y * k + .5, c.w * k, c.h * k); g.setLineDash([]);
+      }
+      edInfo.textContent = (crop ? crop.w + " x " + crop.h + " cut from " : "") + base.width + " x " + base.height;
+      for (const b of toolBtns) b.classList.toggle("nd-on", b.dataset.tool === tool);
+      for (const b of colBtns) b.classList.toggle("nd-on", b.dataset.col === color);
+    }
+    const pos = e => { const r = edCv.getBoundingClientRect(); return [Math.max(0, Math.min(base.width, (e.clientX - r.left) / r.width * base.width)), Math.max(0, Math.min(base.height, (e.clientY - r.top) / r.height * base.height))]; };
+    edCv.addEventListener("pointerdown", e => {
+      if (!base) return; const [x, y] = pos(e);
+      if (tool === "text") { const t = edText.value.trim(); if (!t) { log("capture: type the text first, then click where it should go"); edText.focus(); return; } shapes.push({ type: "text", x1: x, y1: y, text: t, color }); drawEd(); return; }
+      drag = { x1: x, y1: y, x2: x, y2: y }; try { edCv.setPointerCapture(e.pointerId); } catch (x) {}
+    });
+    edCv.addEventListener("pointermove", e => { if (!drag) return; const [x, y] = pos(e); drag.x2 = x; drag.y2 = y; drawEd(); });
+    const endDrag = () => {
+      if (!drag) return; const d = drag; drag = null;
+      if (Math.abs(d.x2 - d.x1) + Math.abs(d.y2 - d.y1) > 8) { if (tool === "crop") crop = norm(d); else shapes.push(Object.assign({ type: tool, color }, d)); }
+      drawEd();
+    };
+    edCv.addEventListener("pointerup", endDrag); edCv.addEventListener("pointercancel", endDrag);
+    const toolBtns = [["crop", "region"], ["arrow", "arrow"], ["box", "box"], ["text", "text"]].map(([k, label]) => { const b = btn(label, () => { tool = k; drawEd(); }); b.dataset.tool = k; return b; });
+    const colBtns = ["#ff4d4d", "#ffd34d", "#9bd64a", "#4fc3d9", "#ffffff"].map(c => { const b = h("button", { class: "nd-btn nd-col", title: "colour", onclick: () => { color = c; drawEd(); } }); b.style.background = c; b.dataset.col = c; return b; });
+    const edInfo = dim("");
+    function closeEditor(msg) { base = null; shapes = []; crop = null; drag = null; ed.style.display = "none"; if (msg) status.textContent = msg; }
+    function exportCv() {
+      const c = crop || { x: 0, y: 0, w: base.width, h: base.height }, cv = document.createElement("canvas"); cv.width = Math.max(1, c.w); cv.height = Math.max(1, c.h);
+      const g = cv.getContext("2d"); g.translate(-c.x, -c.y); g.drawImage(base, 0, 0); drawShapes(g, 1, shapes); return cv;
+    }
+    function openEditor(cv, startTool) {
+      base = cv; shapes = []; crop = null; drag = null; tool = startTool; ed.style.display = ""; drawEd();
+      status.textContent = startTool === "crop" ? "drag over the part you want, then press save" : "draw on the capture, then press save";
+      try { ed.scrollIntoView({ block: "nearest" }); } catch (e) {}
+    }
+    ed.append(h("div", { class: "nd-row" }, toolBtns, colBtns, edText),
+      h("div", { class: "nd-row" }, btn("undo", () => { if (shapes.length) shapes.pop(); else crop = null; drawEd(); }), btn("whole picture", () => { crop = null; drawEd(); }),
+        btn("save", async () => { try { const r = await api("capSave", exportCv().toDataURL("image/png")); closeEditor(); done(r); } catch (e) { log("screenshot failed: " + e.message); } }, "nd-on"),
+        btn("discard", () => closeEditor("capture discarded"), "nd-danger"), edInfo), edCv);
+    if (window.ResizeObserver) new ResizeObserver(() => { if (base) drawEd(); }).observe(ed);
+
+    // settings: format, folder, hotkey
+    const sFormat = h("select", { class: "nd-input", title: "file format" });
+    sFormat.append(h("option", { value: "png", text: "png - sharp" }), h("option", { value: "jpg", text: "jpg - smaller" }));
+    sFormat.addEventListener("change", () => setCfg({ format: sFormat.value }));
+    const dirOut = h("span", { class: "nd-dim nd-path" });
+    const hk = h("input", { class: "nd-input", placeholder: "Control+Alt+P", size: "18", spellcheck: "false" }), hkState = dim("");
+    const bHk = btn("hotkey", () => setCfg({ accel: hk.value.trim() || "Control+Alt+P", hotkey: !cfg.hotkey }).then(c => log(!c.hotkey ? "screenshot hotkey off" : c.hotkeyOk ? "screenshot hotkey " + c.accel + " on" : "screenshot hotkey " + c.accel + " is not available")));
+    function drawCfg() {
+      sFormat.value = cfg.format; dirOut.textContent = cfg.dirShown || ""; dirOut.title = cfg.dirShown || ""; bCopy.classList.toggle("nd-on", !!cfg.copy);
+      if (document.activeElement !== hk) hk.value = cfg.accel || "";
+      bHk.classList.toggle("nd-on", !!cfg.hotkey); hkState.textContent = !cfg.hotkey ? "off" : cfg.hotkeyOk ? "active - captures the chosen screen from anywhere" : "not available - another program uses it";
+    }
+
+    // newest captures
+    const recent = h("div", { class: "nd-recent" });
+    async function loadRecent() {
+      let r; try { r = await api("capList"); } catch (e) { return; }
+      recent.textContent = "";
+      if (!r.files.length) recent.append(dim("nothing captured yet"));
+      for (const f of r.files) {
+        const act = (a, okMsg) => api("capDo", a, f.file).then(() => { if (okMsg) log(okMsg); if (a === "delete") loadRecent(); }).catch(e => { log("capture: " + e.message); loadRecent(); });
+        const d = new Date(f.time), when = two(d.getDate()) + "." + two(d.getMonth() + 1) + ". " + two(d.getHours()) + ":" + two(d.getMinutes());
+        const pic = f.video ? h("div", { class: "nd-rvid", text: "video  " + size(f.size) }) : h("img", { src: f.thumb, alt: "" });
+        pic.title = "open " + f.name; pic.addEventListener("click", () => act("open"));
+        const del = btn(sureDel === f.file ? "sure?" : "x", () => { if (sureDel !== f.file) { sureDel = f.file; loadRecent(); return; } sureDel = ""; act("delete", f.name + " moved to the recycle bin"); }, sureDel === f.file ? "nd-danger" : "");
+        del.title = "Delete (goes to the recycle bin)";
+        recent.append(h("div", { class: "nd-rcard" }, pic, h("span", { class: "nd-dim", text: when }),
+          h("span", { class: "nd-row" }, f.video ? null : btn("copy", () => act("copy", f.name + " copied")), btn("folder", () => act("show")), del)));
+      }
+    }
+
+    // screen recording (video only, no sound)
+    let rec = null, recT = null, recAt = 0;
+    const sRec = h("select", { class: "nd-input", title: "what to record" }), recInfo = dim("saved as .webm video in the capture folder, without sound");
+    const bRecWin = btn("list windows", async () => {
+      try { const s = await api("capSources", true); fillTargets(s.screens); for (const w of s.windows) sRec.append(h("option", { value: w.sid, text: "window: " + w.name.slice(0, 40) })); log("capture: " + s.windows.length + " windows added to the recording list"); }
+      catch (e) { log("capture: " + e.message); }
+    });
+    function drawRec() {
+      bRec.textContent = rec ? "stop recording" : "start recording"; bRec.classList.toggle("nd-danger", !!rec); bRec.classList.toggle("nd-on", !rec); sRec.disabled = !!rec; bRecWin.disabled = !!rec;
+      if (rec) { const s = Math.floor((Date.now() - recAt) / 1000); recInfo.textContent = "recording  " + two(Math.floor(s / 60)) + ":" + two(s % 60); }
+    }
+    const bRec = btn("start recording", async () => {
+      if (rec) { try { rec.stop(); } catch (e) {} return; }
+      if (!sRec.value) { log("capture: nothing to record was found"); return; }
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: sRec.value, maxFrameRate: 30, maxWidth: 3840, maxHeight: 2160 } } });
+        const type = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(t => MediaRecorder.isTypeSupported(t));
+        await api("recStart");
+        const mr = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 8000000 }); let chain = Promise.resolve();
+        mr.ondataavailable = e => { if (e.data && e.data.size) chain = chain.then(() => e.data.arrayBuffer()).then(b => api("recChunk", new Uint8Array(b))).catch(() => {}); };
+        mr.onstop = async () => {
+          clearInterval(recT); stream.getTracks().forEach(t => t.stop()); await chain; rec = null;
+          try { const r = await api("recStop"); recInfo.textContent = r ? "saved: " + r.file : "nothing was recorded"; if (r) log("recording saved (" + size(r.size) + ")"); } catch (e) { log("recording: " + e.message); }
+          drawRec(); loadRecent();
+        };
+        stream.getVideoTracks()[0].addEventListener("ended", () => { if (rec) { try { rec.stop(); } catch (e) {} } });
+        mr.start(1000); rec = mr; recAt = Date.now(); recT = setInterval(drawRec, 500); log("recording started");
+      } catch (e) {
+        log("recording failed: " + e.message); if (stream) stream.getTracks().forEach(t => t.stop());
+        try { await api("recStop"); } catch (x) {} rec = null;
+      }
+      drawRec();
     }, "nd-on");
-    root.append(h("div", { class: "nd-row" }, take, btn("open folder", () => api("openShots").catch(e => log("could not open folder: " + e.message)))),
-      h("label", { class: "nd-opt" }, hide, h("span"), "hide nightdeck while capturing"), last,
-      h("span", { class: "nd-dim", text: "captures the main screen." }));
+
+    root.append(h("div", { class: "nd-row" }, sTarget, bShot, bRegion, bWin), picker,
+      h("div", { class: "nd-row" }, sDelay, bHide, bCopy, bEdit), status, ed,
+      sub("recent captures"), recent,
+      sub("screen recording"), h("div", { class: "nd-row" }, sRec, bRecWin, bRec), recInfo,
+      sub("settings"), h("div", { class: "nd-row" }, sFormat, btn("change folder", () => setCfg({ pickDir: true }).then(loadRecent)), btn("default folder", () => setCfg({ resetDir: true }).then(loadRecent)),
+        btn("open folder", () => api("openShots").catch(e => log("could not open folder: " + e.message)))), dirOut,
+      h("div", { class: "nd-row" }, bHk, hk, hkState));
+    async function refresh() {
+      await setCfg({});
+      try { fillTargets((await api("capSources", false)).screens); } catch (e) {}
+      loadRecent();
+    }
+    onTab.capture = () => { if (!rec) refresh(); else loadRecent(); };
+    refresh();
   })();
 
   /* ---------- calculators and converters ---------- */

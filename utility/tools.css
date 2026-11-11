@@ -154,6 +154,22 @@ input[type=time].nd-input,input[type=number].nd-input{color-scheme:dark}
 .nd-laps{max-height:112px; overflow-y:auto; scrollbar-width:none; margin-top:6px}
 .nd-laps::-webkit-scrollbar{display:none}
 .nd-tab[data-badge]::after{content:attr(data-badge); font:500 11px "IBM Plex Mono",ui-monospace,monospace; color:#4fc3d9; margin-left:8px; text-shadow:none; vertical-align:2px}
+/* capture tab */
+.nd-wpick{display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:8px; border:1px solid #2a3138; padding:8px; max-height:230px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:#39424a transparent}
+.nd-wthumb{display:flex; flex-direction:column; gap:4px; padding:5px; align-items:stretch; min-width:0}
+.nd-wthumb img{width:100%; height:70px; object-fit:contain; background:#0f1215}
+.nd-wthumb span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px}
+.nd-ed{display:flex; flex-direction:column; gap:6px; border:1px solid #2a3138; padding:8px}
+.nd-ed .nd-btn{padding:3px 8px}
+.nd-edcv{width:100%; display:block; cursor:crosshair; touch-action:none; background:#0f1215; -webkit-app-region:no-drag}
+.nd-btn.nd-col{width:20px; height:20px; padding:0; border-color:#2a3138}
+.nd-btn.nd-col.nd-on{outline:2px solid #dfe6ea; outline-offset:1px}
+.nd-recent{display:grid; grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:8px}
+.nd-rcard{display:flex; flex-direction:column; gap:3px; min-width:0}
+.nd-rcard img,.nd-rvid{width:100%; height:64px; object-fit:contain; background:#0f1215; border:1px solid #2a3138; cursor:pointer}
+.nd-rvid{display:flex; align-items:center; justify-content:center; color:#7d8891; font-size:11px}
+.nd-rcard .nd-btn{padding:1px 6px}
+.nd-rcard .nd-row{flex-wrap:nowrap; gap:4px}
 /* network tab */
 .nd-netbars{gap:9px 18px}
 .nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}

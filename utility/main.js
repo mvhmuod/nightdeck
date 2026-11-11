@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, ipcMain, screen, clipboard, dialog, desktopCapturer, Notification, Tray, globalShortcut, powerSaveBlocker } = require("electron");
+const { app, BrowserWindow, Menu, shell, ipcMain, screen, clipboard, dialog, desktopCapturer, Notification, Tray, globalShortcut, powerSaveBlocker, nativeImage } = require("electron");
 const { execFile, spawn } = require("child_process");
 const netmod = require("net");
 const https = require("https");
@@ -512,27 +512,160 @@ function pollClipboard() {
   if (!clipCfg.paused) clipAddText(t);
 }
 
-// ---- Screenshot ----
-const shotsDir = () => path.join(app.getPath("pictures"), "Nightdeck Screenshots");
-async function screenshot(hide) {
-  const d = screen.getPrimaryDisplay();
-  const size = { width: Math.round(d.size.width * d.scaleFactor), height: Math.round(d.size.height * d.scaleFactor) };
-  const conWasVisible = con && !con.isDestroyed() && con.isVisible();
-  if (hide) { if (conWasVisible) con.hide(); main.hide(); await new Promise(r => setTimeout(r, 400)); }
+// ---- Screenshot and screen recording ----
+const capCfgFile = () => path.join(app.getPath("userData"), "capture.json");
+let capCfg = { dir: "", format: "png", copy: false, hotkey: false, accel: "Control+Alt+P", screen: "" }, capKeyOn = "";
+function capLoad() {
   try {
-    const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: size });
-    const src = sources.find(x => String(x.display_id) === String(d.id)) || sources[0];
-    if (!src || src.thumbnail.isEmpty()) throw new Error("the screen could not be captured");
-    fs.mkdirSync(shotsDir(), { recursive: true });
-    const n = new Date(), pad = x => String(x).padStart(2, "0");
-    const file = path.join(shotsDir(), "shot-" + n.getFullYear() + pad(n.getMonth() + 1) + pad(n.getDate()) + "-" +
-      pad(n.getHours()) + pad(n.getMinutes()) + pad(n.getSeconds()) + ".png");
-    fs.writeFileSync(file, src.thumbnail.toPNG());
-    const sz = src.thumbnail.getSize();
-    return { file, width: sz.width, height: sz.height };
-  } finally {
-    if (hide && main && !main.isDestroyed()) { main.show(); if (conWasVisible && con && !con.isDestroyed()) { sync(); con.showInactive(); } }
+    const j = JSON.parse(fs.readFileSync(capCfgFile(), "utf8"));
+    capCfg = { dir: typeof j.dir === "string" ? j.dir : "", format: j.format === "jpg" ? "jpg" : "png", copy: !!j.copy, hotkey: !!j.hotkey,
+      accel: typeof j.accel === "string" && LACCEL.test(j.accel) ? j.accel : "Control+Alt+P", screen: String(j.screen || "") };
+  } catch (e) {}
+}
+const shotsDir = () => (capCfg.dir && fs.existsSync(capCfg.dir)) ? capCfg.dir : path.join(app.getPath("pictures"), "Nightdeck Screenshots");
+const capStamp = () => { const n = new Date(), p = x => String(x).padStart(2, "0"); return n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()) + "-" + p(n.getHours()) + p(n.getMinutes()) + p(n.getSeconds()); };
+function capWrite(img, copy) { // saves a picture in the chosen format, and puts it on the clipboard when asked
+  fs.mkdirSync(shotsDir(), { recursive: true });
+  let file = path.join(shotsDir(), "shot-" + capStamp() + "." + capCfg.format), n = 1;
+  while (fs.existsSync(file)) file = path.join(shotsDir(), "shot-" + capStamp() + "-" + (++n) + "." + capCfg.format);
+  fs.writeFileSync(file, capCfg.format === "jpg" ? img.toJPEG(92) : img.toPNG());
+  if (copy) { try { clipboard.writeImage(img); } catch (e) {} }
+  const s = img.getSize();
+  return { file, width: s.width, height: s.height, copied: !!copy };
+}
+async function capHide(hide, fn) { // runs fn with the Nightdeck windows out of the picture
+  const mainVis = main && !main.isDestroyed() && main.isVisible(), conVis = con && !con.isDestroyed() && con.isVisible();
+  if (hide && mainVis) { if (conVis) con.hide(); main.hide(); await new Promise(r => setTimeout(r, 400)); }
+  try { return await fn(); }
+  finally { if (hide && mainVis && main && !main.isDestroyed()) { main.show(); if (conVis && con && !con.isDestroyed()) { sync(); con.showInactive(); } } }
+}
+async function capScreens() { // one picture per screen, in real pixels
+  const ds = screen.getAllDisplays(), prim = screen.getPrimaryDisplay().id;
+  const phys = d => ({ width: Math.round(d.size.width * d.scaleFactor), height: Math.round(d.size.height * d.scaleFactor) });
+  const max = ds.reduce((m, d) => ({ width: Math.max(m.width, phys(d).width), height: Math.max(m.height, phys(d).height) }), { width: 1, height: 1 });
+  const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: max });
+  return ds.map(d => {
+    const src = sources.find(x => String(x.display_id) === String(d.id)) || (ds.length === 1 ? sources[0] : null);
+    if (!src || src.thumbnail.isEmpty()) return null;
+    const p = phys(d); let img = src.thumbnail; const s = img.getSize();
+    if (s.width !== p.width || s.height !== p.height) img = img.resize({ width: p.width, height: p.height });
+    return { id: String(d.id), img, x: Math.round(d.bounds.x * d.scaleFactor), y: Math.round(d.bounds.y * d.scaleFactor), w: p.width, h: p.height, primary: d.id === prim };
+  }).filter(Boolean);
+}
+async function capWindow(sid) {
+  const srcs = await desktopCapturer.getSources({ types: ["window"], thumbnailSize: { width: 3840, height: 2160 } });
+  const s = srcs.find(x => x.id === sid);
+  if (!s || s.thumbnail.isEmpty()) throw new Error("that window could not be captured - it may be closed or minimised");
+  return s.thumbnail;
+}
+async function capOne(o) {
+  if (o.kind === "window") return capWindow(String(o.id));
+  const all = await capScreens(), s = all.find(x => x.id === String(o.id)) || all.find(x => x.primary) || all[0];
+  if (!s) throw new Error("the screen could not be captured");
+  return s.img;
+}
+// straight to a file: one screen or one window
+function capShot(o) { o = o || {}; return capHide(!!o.hide, async () => capWrite(await capOne(o), o.copy == null ? capCfg.copy : !!o.copy)); }
+// pictures handed to the window, for "all screens", cutting out a region and drawing on a capture
+function capGrab(o) {
+  o = o || {};
+  return capHide(!!o.hide, async () => {
+    if (o.kind !== "all") { const img = await capOne(o), z = img.getSize(); return { images: [{ url: img.toDataURL(), x: 0, y: 0, w: z.width, h: z.height }] }; }
+    const all = await capScreens(); if (!all.length) throw new Error("the screens could not be captured");
+    return { images: all.map(s => ({ url: s.img.toDataURL(), x: s.x, y: s.y, w: s.w, h: s.h })) };
+  });
+}
+function capSave(url, copy) {
+  const img = nativeImage.createFromDataURL(String(url));
+  if (img.isEmpty()) throw new Error("the picture could not be saved");
+  return capWrite(img, copy == null ? capCfg.copy : !!copy);
+}
+async function capSources(withWindows) {
+  const ds = screen.getAllDisplays(), prim = screen.getPrimaryDisplay().id;
+  const scr = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } });
+  const out = { windows: [], screens: ds.map((d, i) => {
+    const s = scr.find(x => String(x.display_id) === String(d.id)) || scr[i];
+    return { id: String(d.id), sid: s ? s.id : "", label: "screen " + (i + 1) + (d.id === prim ? " (main)" : "") + "   " + Math.round(d.size.width * d.scaleFactor) + " x " + Math.round(d.size.height * d.scaleFactor) };
+  }) };
+  if (withWindows) {
+    const win = await desktopCapturer.getSources({ types: ["window"], thumbnailSize: { width: 240, height: 150 } });
+    out.windows = win.filter(w => w.name && !/^Nightdeck Utility/.test(w.name) && !w.thumbnail.isEmpty()).slice(0, 24)
+      .map(w => ({ sid: w.id, name: String(w.name).slice(0, 80), thumb: w.thumbnail.toDataURL() }));
   }
+  return out;
+}
+const capThumbs = new Map();
+function capList() { // the newest captures with small previews
+  let files = [];
+  try {
+    files = fs.readdirSync(shotsDir()).filter(f => /\.(png|jpe?g|webm)$/i.test(f)).map(f => { const p = path.join(shotsDir(), f), st = fs.statSync(p); return { file: p, name: f, time: st.mtimeMs, size: st.size }; });
+  } catch (e) {}
+  files.sort((a, b) => b.time - a.time); files = files.slice(0, 12);
+  for (const f of files) {
+    f.video = /\.webm$/i.test(f.name); f.thumb = "";
+    if (f.video) continue;
+    const key = f.file + "|" + f.time;
+    if (!capThumbs.has(key)) {
+      let t = ""; try { const im = nativeImage.createFromPath(f.file); if (!im.isEmpty()) t = im.resize({ height: 64 }).toDataURL(); } catch (e) {}
+      capThumbs.set(key, t); if (capThumbs.size > 60) capThumbs.delete(capThumbs.keys().next().value);
+    }
+    f.thumb = capThumbs.get(key);
+  }
+  return { dir: shotsDir(), files };
+}
+async function capDo(action, file) { // open, show in folder, copy or delete one capture; only files in the capture folder are touched
+  file = path.resolve(String(file));
+  if (path.dirname(file).toLowerCase() !== path.resolve(shotsDir()).toLowerCase() || !/\.(png|jpe?g|webm)$/i.test(file) || !fs.existsSync(file))
+    throw new Error("that file is not in the capture folder any more");
+  if (action === "open") { const e = await shell.openPath(file); if (e) throw new Error(e); }
+  else if (action === "show") shell.showItemInFolder(file);
+  else if (action === "copy") { const im = nativeImage.createFromPath(file); if (im.isEmpty()) throw new Error("only pictures can be copied"); clipboard.writeImage(im); }
+  else if (action === "delete") await shell.trashItem(file); // goes to the recycle bin
+  else throw new Error("unexpected request");
+  return true;
+}
+function registerCapKey() {
+  if (capKeyOn) { try { globalShortcut.unregister(capKeyOn); } catch (e) {} capKeyOn = ""; }
+  if (!capCfg.hotkey || !LACCEL.test(capCfg.accel)) return false;
+  try {
+    if (!globalShortcut.isRegistered(capCfg.accel) && globalShortcut.register(capCfg.accel, () => {
+      capShot({ kind: "screen", id: capCfg.screen, hide: false }).then(r => {
+        try { new Notification({ title: "Nightdeck", body: "Screenshot saved: " + path.basename(r.file) }).show(); } catch (e) {}
+      }).catch(() => {});
+    })) { capKeyOn = capCfg.accel; return true; }
+  } catch (e) {}
+  return false;
+}
+async function capSet(o) { // changes the capture settings; called with nothing it just reports them
+  o = o || {};
+  if (o.pickDir) {
+    const r = await dialog.showOpenDialog(main, { properties: ["openDirectory", "createDirectory"], defaultPath: shotsDir() });
+    if (!r.canceled && r.filePaths[0]) capCfg.dir = r.filePaths[0];
+  }
+  if (o.resetDir) capCfg.dir = "";
+  if (o.format === "png" || o.format === "jpg") capCfg.format = o.format;
+  if (typeof o.copy === "boolean") capCfg.copy = o.copy;
+  if (typeof o.screen === "string") capCfg.screen = o.screen;
+  if (typeof o.accel === "string") { if (!LACCEL.test(o.accel)) throw new Error("a hotkey must look like Control+Alt+P"); capCfg.accel = o.accel; }
+  if (typeof o.hotkey === "boolean") capCfg.hotkey = o.hotkey;
+  try { fs.writeFileSync(capCfgFile(), JSON.stringify(capCfg)); } catch (e) {}
+  const ok = registerCapKey();
+  return Object.assign({}, capCfg, { dirShown: shotsDir(), hotkeyOk: ok });
+}
+// screen recording: the window records, the video arrives here in pieces and is written straight to the file
+let recStream = null, recPath = "";
+function recStart() {
+  if (recStream) throw new Error("a recording is already running");
+  fs.mkdirSync(shotsDir(), { recursive: true });
+  recPath = path.join(shotsDir(), "recording-" + capStamp() + ".webm"); recStream = fs.createWriteStream(recPath); return recPath;
+}
+function recChunk(buf) { if (!recStream) return false; recStream.write(Buffer.from(buf)); return true; }
+function recStop() {
+  return new Promise(resolve => {
+    if (!recStream) return resolve(null);
+    const s = recStream, p = recPath; recStream = null;
+    s.end(() => { let size = 0; try { size = fs.statSync(p).size; } catch (e) {} resolve({ file: p, size }); });
+  });
 }
 
 // ---- Temperatures (best effort: Windows only exposes these on some PCs) ----
@@ -827,7 +960,7 @@ function applyTray() {
 }
 const ACCEL = /^((Control|Ctrl|Alt|Shift|Super)\+){1,3}([A-Z0-9]|F([1-9]|1[0-2])|Space)$/i;
 function applyHotkey() {
-  globalShortcut.unregisterAll(); hotkeyOk = false; setTimeout(registerLaunchKeys, 0); // the shortcut hotkeys are put back right after
+  globalShortcut.unregisterAll(); hotkeyOk = false; setTimeout(() => { registerCapKey(); registerLaunchKeys(); }, 0); // the shortcut hotkeys are put back right after
   if (settings.hotkey && ACCEL.test(settings.accel)) { try { hotkeyOk = globalShortcut.register(settings.accel, toggleAll); } catch (e) { hotkeyOk = false; } }
 }
 const LOGIN_ARGS = ["--startup"];
@@ -1159,7 +1292,7 @@ const API = {
     try { if (Notification.isSupported()) new Notification({ title: "Nightdeck", body: String(label || "Timer finished") }).show(); } catch (e) {}
     return true;
   },
-  screenshot: hide => screenshot(!!hide),
+  capShot, capGrab, capSave, capSources, capList, capDo, capSet, recStart, recChunk, recStop,
   async openShots() { fs.mkdirSync(shotsDir(), { recursive: true }); const err = await shell.openPath(shotsDir()); if (err) throw new Error(err); return true; }
 };
 ipcMain.handle("nd-api", async (event, name, ...args) => {
@@ -1180,5 +1313,5 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", showAll);
 app.on("before-quit", () => { quitting = true; });
 app.on("will-quit", () => { try { globalShortcut.unregisterAll(); } catch (e) {} try { if (netPs) netPs.kill(); } catch (e) {} });
-app.whenReady().then(() => { loadSettings(); createWindows(); applyTray(); applyHotkey(); clipLoad(); setInterval(pollClipboard, 1000); });
+app.whenReady().then(() => { loadSettings(); createWindows(); applyTray(); capLoad(); applyHotkey(); clipLoad(); setInterval(pollClipboard, 1000); });
 app.on("window-all-closed", () => app.quit());

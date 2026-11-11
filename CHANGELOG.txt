@@ -192,6 +192,17 @@ v2.38  Timers tab rebuilt
        - Pomodoro: 25 minutes work, 5 break, long break after 4 rounds.
        - Everything keeps running across tabs, "update" and a restart.
        - The nearest timer's remaining time shows next to the tab name.
+v2.39  Capture tab rebuilt
+       - Choose the screen, or all screens in one picture.
+       - Capture a single window from a list with previews.
+       - "select a region": capture, then drag over the part to keep.
+       - Delay of 3, 5 or 10 seconds.
+       - Copy to clipboard, PNG or JPG, own folder.
+       - Recent captures with open, copy, show in folder and delete
+         (to the recycle bin).
+       - Global hotkey for a screenshot from anywhere.
+       - Editor: arrows, boxes and text in five colours, undo.
+       - Screen recording of a screen or window as .webm, no sound.
        >> Current version.
 
 
