@@ -166,10 +166,10 @@ async function listProcs() {
   let rows = [];
   if (WIN) {
     const r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-      "Get-Process | Select-Object Name,Id,CPU,WorkingSet64,Path | ConvertTo-Json -Compress"], 20000);
+      "Get-Process | Select-Object Name,Id,CPU,WorkingSet64,Path,MainWindowTitle | ConvertTo-Json -Compress"], 20000);
     if (!r.out.trim()) throw new Error("could not read the program list");
     let data = JSON.parse(r.out); if (!Array.isArray(data)) data = [data];
-    rows = data.map(p => ({ name: String(p.Name), cpu: Number(p.CPU) || 0, mem: Number(p.WorkingSet64) || 0, path: p.Path ? String(p.Path) : "" }));
+    rows = data.map(p => ({ name: String(p.Name), cpu: Number(p.CPU) || 0, mem: Number(p.WorkingSet64) || 0, path: p.Path ? String(p.Path) : "", title: p.MainWindowTitle ? String(p.MainWindowTitle) : "" }));
   } else {
     const r = await run("ps", ["-eo", "comm=,cputimes=,rss="]);
     for (const line of r.out.split("\n")) {
@@ -180,19 +180,63 @@ async function listProcs() {
   const map = new Map();
   for (const p of rows) {
     const g = map.get(p.name) || { name: p.name, count: 0, cpuSec: 0, mem: 0 };
-    g.count++; g.cpuSec += p.cpu; g.mem += p.mem; if (!g.path && p.path) g.path = p.path; map.set(p.name, g);
+    g.count++; g.cpuSec += p.cpu; g.mem += p.mem; if (!g.path && p.path) g.path = p.path; if (!g.title && p.title) g.title = p.title; map.set(p.name, g);
   }
   const now = Date.now(), cores = os.cpus().length || 1, out = [];
   for (const g of map.values()) {
     let cpu = null;
     if (prevProc && prevProc.map.has(g.name) && now > prevProc.t)
       cpu = Math.max(0, g.cpuSec - prevProc.map.get(g.name)) / ((now - prevProc.t) / 1000) / cores * 100;
-    out.push({ name: g.name, count: g.count, cpu, mem: g.mem, protected: isProtected(g.name) });
+    out.push({ name: g.name, count: g.count, cpu, mem: g.mem, protected: isProtected(g.name), win: !!g.title, title: g.title || "", path: g.path || "" });
   }
   prevProc = { t: now, map: new Map([...map].map(([k, v]) => [k, v.cpuSec])) };
+  procPaths = new Set(out.map(p => p.path).filter(Boolean));
   await Promise.all(out.map(async p => { const g = map.get(p.name); p.icon = g && g.path ? await fileIcon(g.path) : ""; }));
   return out;
 }
+// ---- Programs that start with Windows (the "Run" lists of this user and of the whole PC) ----
+function psEnv(script, env, timeout) {
+  return new Promise(resolve => {
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script],
+      { timeout: timeout || 20000, windowsHide: true, maxBuffer: 8 * 1024 * 1024, env: Object.assign({}, process.env, env || {}) },
+      (err, out, serr) => resolve({ ok: !err, out: String(out || ""), err: String(serr || (err && err.message) || "") }));
+  });
+}
+async function startupList() {
+  if (!WIN) return { items: [], msg: "only available on Windows" };
+  const ps = "$ErrorActionPreference='SilentlyContinue'; $out=@(); foreach($h in 'HKCU','HKLM'){" +
+    " $k=$h+':\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'; $a=$h+':\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';" +
+    " $p=Get-ItemProperty -Path $k; $ap=Get-ItemProperty -Path $a; if($p){ foreach($x in $p.PSObject.Properties){ if($x.Name -like 'PS*'){continue};" +
+    " $s=$null; if($ap){$s=$ap.($x.Name)}; $on=$true; if($s -and ($s[0] -band 1)){$on=$false};" +
+    " $out+=[pscustomobject]@{name=$x.Name;cmd=[string]$x.Value;hive=$h;on=$on} } } }; ConvertTo-Json -Compress -InputObject @($out)";
+  const r = await psEnv(ps, null, 20000);
+  let items = []; try { items = [].concat(JSON.parse(r.out || "[]") || []).filter(x => x && x.name); } catch (e) { throw new Error("could not read the startup list"); }
+  for (const it of items) {
+    const m = /^\s*"([^"]+)"/.exec(it.cmd) || /^\s*(.+?\.exe)/i.exec(it.cmd);
+    let file = m ? m[1].replace(/%([^%]+)%/g, (all, v) => process.env[v] || all) : "";
+    it.icon = file && fs.existsSync(file) ? await fileIcon(file) : "";
+    it.on = !!it.on;
+  }
+  return { items: items.sort((a, b) => a.name.localeCompare(b.name)) };
+}
+async function startupSet(hive, name, on) {
+  if (!WIN) throw new Error("only available on Windows");
+  if (hive !== "HKCU" && hive !== "HKLM") throw new Error("unexpected request");
+  name = String(name); if (!name || name.length > 200) throw new Error("unexpected name");
+  // Windows keeps the on/off state of a startup entry in "StartupApproved"; the entry itself is left alone
+  const ps = "$ErrorActionPreference='Stop'; try { $a='" + hive + ":\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';" +
+    " if(-not (Test-Path $a)){ New-Item -Path $a -Force | Out-Null };" +
+    " $v=[byte[]](" + (on ? 2 : 3) + ",0,0,0,0,0,0,0,0,0,0,0); Set-ItemProperty -Path $a -Name $env:ND_NAME -Value $v -Type Binary; exit 0 } catch { exit 5 }";
+  const r = await psEnv(ps, { ND_NAME: name }, 20000);
+  return { ok: r.ok, msg: r.ok ? "" : (hive === "HKLM" ? "this entry is for all users - windows needs administrator rights to change it" : "windows did not accept the change") };
+}
+let procPaths = new Set();
+function showFile(file) {
+  file = String(file);
+  if (!procPaths.has(file)) throw new Error("that program is no longer running");
+  shell.showItemInFolder(file); return true;
+}
+
 async function killProc(name, force) {
   name = String(name);
   if (!/^[\w .+\-()]{1,80}$/.test(name)) throw new Error("unexpected program name");
@@ -811,6 +855,7 @@ const API = {
   rates: currencyRates,
   volume, brightness, switchesGet, switchSet, cleanScan, cleanTemp, cleanBin, settingsGet, settingSet,
   procs: listProcs,
+  startupList, startupSet, showFile,
   kill: killProc,
   net() {
     const adapters = [], ifs = os.networkInterfaces();

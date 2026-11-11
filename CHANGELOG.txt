@@ -133,6 +133,17 @@ v2.32  System tab extended
        - "system temp" renamed to "mainboard temp" (it is a mainboard
          sensor, Windows does not give out the processor temperature).
        - "copy specs" button.
+v2.33  Apps tab extended
+       - Search box.
+       - Click the program, cpu or memory heading to sort; click again
+         to reverse.
+       - Two groups: apps (programs with a window) and background.
+       - "show all" switch for the full list.
+       - "..." on each row: open file location, force close.
+       - Totals line: processes, cpu, memory.
+       - New list "starts with windows" with an on/off button for
+         each program. Entries for all users need administrator rights.
+       (Asking before a program is closed was already there.)
        >> Current version.
 
 

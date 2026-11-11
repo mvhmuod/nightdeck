@@ -82,6 +82,16 @@ select.nd-input{max-width:190px}
 .nd-pane[data-pane="system"] .nd-info output{min-width:0}
 .nd-pane[data-pane="system"] .nd-info span{white-space:nowrap}
 .nd-pane[data-pane="system"] .nd-specs{flex:1 1 100%; margin-top:4px}
+/* apps tab */
+.nd-sorth{cursor:pointer; -webkit-app-region:no-drag; user-select:none}
+.nd-sorth:hover,.nd-sorth.nd-on{color:#dfe6ea}
+.nd-group{margin-top:6px}
+.nd-more{display:flex; justify-content:space-between; align-items:center; gap:8px; padding:3px 0 6px 24px; border-bottom:1px solid #1e242a}
+.nd-more .nd-btn{padding:2px 8px}
+.nd-more .nd-row{flex-wrap:nowrap; gap:4px}
+.nd-path{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
+.nd-tr.nd-start{grid-template-columns:minmax(0,1fr) 70px 44px}
+.nd-tr.nd-start>span:nth-child(2){text-align:left}
 /* network tab */
 .nd-netbars{gap:9px 18px}
 .nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}

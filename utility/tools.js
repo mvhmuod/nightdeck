@@ -131,29 +131,56 @@
   /* ---------- running apps ---------- */
   (function () {
     const root = $c("apps"); if (!root) return;
-    let sort = store.get("procsort", "mem"), data = [], pending = null, force = false, busy = false;
+    let sort = store.get("procsort", "mem"), dir = store.get("procdir", -1), all = store.get("procall", false), query = "";
+    let data = [], pending = null, force = false, busy = false, open = null;
     const status = h("span", { class: "nd-dim" });
-    const bMem = btn("memory", () => setSort("mem")), bCpu = btn("cpu", () => setSort("cpu"));
+    const search = h("input", { class: "nd-input", placeholder: "search programs", size: "16", spellcheck: "false" });
+    search.addEventListener("input", () => { query = search.value.trim().toLowerCase(); render(); });
+    const bAll = btn("show all", () => { all = !all; store.set("procall", all); render(); });
     const list = h("div", { class: "nd-table" });
-    root.append(h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "sort by" }), bMem, bCpu, status), list);
-    function setSort(s) { sort = s; store.set("procsort", s); render(); }
-    function render() {
-      bMem.classList.toggle("nd-on", sort === "mem"); bCpu.classList.toggle("nd-on", sort === "cpu");
-      list.textContent = "";
-      list.append(h("div", { class: "nd-tr nd-th" }, h("span", { text: "program" }), h("span", { text: "cpu" }), h("span", { text: "memory" }), h("span")));
-      const rows = [...data].sort((a, b) => sort === "cpu" ? (b.cpu || 0) - (a.cpu || 0) : b.mem - a.mem).slice(0, 14);
-      for (const p of rows) {
-        let action;
-        if (p.protected) action = h("span", { class: "nd-dim", text: "system" });
-        else if (pending === p.name) action = h("span", { class: "nd-row" },
-          btn(force ? "force" : "yes", () => kill(p.name), "nd-danger"), btn("no", () => { pending = null; force = false; render(); }));
-        else action = btn("close", () => { pending = p.name; force = false; render(); });
-        list.append(h("div", { class: "nd-tr" },
-          h("span", { class: "nd-app", title: p.name },
-            p.icon ? h("img", { class: "nd-appicon", src: p.icon, alt: "" }) : h("i", { class: "nd-appicon nd-noicon" }),
-            p.name + (p.count > 1 ? " (" + p.count + ")" : "")),
-          h("span", { text: p.cpu == null ? "..." : p.cpu.toFixed(1) + "%" }), h("span", { text: size(p.mem) }), action));
+    function setSort(s) {
+      if (sort === s) dir = -dir; else { sort = s; dir = s === "name" ? 1 : -1; }
+      store.set("procsort", sort); store.set("procdir", dir); render();
+    }
+    // click a heading to sort by it, click again to turn the order round
+    const head = (label, key) => {
+      const el = h("span", { class: "nd-sorth" + (sort === key ? " nd-on" : ""), text: label + (sort === key ? (dir < 0 ? " ▾" : " ▴") : ""), title: "sort by " + label });
+      el.addEventListener("click", () => setSort(key)); return el;
+    };
+    const val = p => (sort === "cpu" ? p.cpu : p.mem) || 0;
+    const cmp = (a, b) => sort === "name" ? dir * a.name.localeCompare(b.name) : dir * (val(a) - val(b));
+    const iconOf = p => p.icon ? h("img", { class: "nd-appicon", src: p.icon, alt: "" }) : h("i", { class: "nd-appicon nd-noicon" });
+    function rowsFor(p) {
+      let action;
+      if (p.protected) action = h("span", { class: "nd-dim", text: "system" });
+      else if (pending === p.name) action = h("span", { class: "nd-row" },
+        btn(force ? "force" : "yes", () => kill(p.name), "nd-danger"), btn("no", () => { pending = null; force = false; render(); }));
+      else action = h("span", { class: "nd-row" }, btn("close", () => { pending = p.name; force = false; open = null; render(); }),
+        btn("…", () => { open = open === p.name ? null : p.name; render(); }));
+      const out = [h("div", { class: "nd-tr" },
+        h("span", { class: "nd-app", title: p.title || p.name }, iconOf(p), p.name + (p.count > 1 ? " (" + p.count + ")" : "")),
+        h("span", { text: p.cpu == null ? "..." : p.cpu.toFixed(1) + "%" }), h("span", { text: size(p.mem) }), action)];
+      if (open === p.name && !p.protected) {
+        const more = h("span", { class: "nd-row" });
+        if (p.path) more.append(btn("open file location", () => api("showFile", p.path).then(() => log("opened the folder of " + p.name)).catch(e => log("could not open the folder: " + e.message))));
+        more.append(btn("force close", () => { pending = p.name; force = true; open = null; render(); }, "nd-danger"));
+        out.push(h("div", { class: "nd-more" }, h("span", { class: "nd-dim nd-path", text: p.path || "file location not available", title: p.path || "" }), more));
       }
+      return out;
+    }
+    function render() {
+      bAll.classList.toggle("nd-on", !!all);
+      list.textContent = "";
+      list.append(h("div", { class: "nd-tr nd-th" }, head("program", "name"), head("cpu", "cpu"), head("memory", "mem"), h("span")));
+      const match = data.filter(p => !query || p.name.toLowerCase().includes(query) || String(p.title || "").toLowerCase().includes(query));
+      for (const [label, items] of [["apps", match.filter(p => p.win)], ["background", match.filter(p => !p.win)]]) {
+        if (!items.length) continue;
+        items.sort(cmp);
+        const shown = all || query ? items : items.slice(0, label === "apps" ? 30 : 10);
+        list.append(h("div", { class: "nd-sub nd-group", text: label + "  (" + items.length + ")" + (shown.length < items.length ? "  -  top " + shown.length + " shown" : "") }));
+        for (const p of shown) list.append(...rowsFor(p));
+      }
+      if (!match.length) list.append(h("div", { class: "nd-dim", text: query ? "nothing matches \"" + query + "\"" : "no programs found" }));
     }
     async function kill(name) {
       const f = force;
@@ -167,11 +194,40 @@
     }
     async function load() {
       if (busy) return; busy = true;
-      try { data = await api("procs"); status.textContent = data.length + " programs running"; render(); }
-      catch (e) { status.textContent = e.message; }
+      try {
+        data = await api("procs");
+        let n = 0, cpu = 0, mem = 0; for (const p of data) { n += p.count || 1; cpu += p.cpu || 0; mem += p.mem || 0; }
+        status.textContent = n + " processes    cpu " + Math.round(cpu) + "%    memory " + size(mem);
+        render();
+      } catch (e) { status.textContent = e.message; }
       busy = false;
     }
-    onTab.apps = load;
+
+    // programs that start with Windows
+    const sList = h("div", { class: "nd-table" }), sNote = h("span", { class: "nd-dim" });
+    async function loadStartup() {
+      sNote.textContent = "reading...";
+      try {
+        const r = await api("startupList"); sList.textContent = "";
+        if (r.msg) { sNote.textContent = r.msg; return; }
+        for (const it of r.items) {
+          const b = btn(it.on ? "on" : "off", async () => {
+            b.disabled = true;
+            try { const x = await api("startupSet", it.hive, it.name, !it.on); log(x.ok ? "start with windows: " + it.name + (it.on ? " off" : " on") : it.name + ": " + x.msg); }
+            catch (e) { log("startup change failed: " + e.message); }
+            loadStartup();
+          });
+          if (it.on) b.classList.add("nd-on");
+          sList.append(h("div", { class: "nd-tr nd-start" }, h("span", { class: "nd-app", title: it.cmd }, iconOf(it), it.name),
+            h("span", { class: "nd-dim", text: it.hive === "HKLM" ? "all users" : "this user" }), b));
+        }
+        const on = r.items.filter(x => x.on).length;
+        sNote.textContent = r.items.length ? on + " of " + r.items.length + " switched on - changes apply at the next start of windows" : "nothing found";
+      } catch (e) { sNote.textContent = e.message; }
+    }
+    root.append(h("div", { class: "nd-row" }, search, bAll, status), list,
+      h("div", { class: "nd-sub", text: "starts with windows" }), h("div", { class: "nd-row" }, btn("refresh", loadStartup), sNote), sList);
+    onTab.apps = () => { load(); loadStartup(); };
     setInterval(() => { if (active === "apps") load(); }, 3000);
   })();
 
