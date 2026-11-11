@@ -172,6 +172,16 @@ v2.36  Clipboard tab rebuilt
          colour codes a swatch.
        - "..." on an entry: UPPER CASE, lower case, tidy spaces, plain
          text, delete.
+v2.37  Notes tab rebuilt
+       - Several notes with titles, search, pin, sorted by last change.
+       - Checklist view: lines starting with "- " get a tick box.
+       - Export a note as a .txt file, import a text file as a new note.
+       - Backup copy of all notes in the app's data folder; it is
+         brought back automatically if the app's storage is empty.
+       - Word and character count, time of last change.
+       - Insert date and time, paste from clipboard, three text sizes.
+       - Lock: covers a note until clicked (a cover, not encryption).
+       The old single note became the first note.
        >> Current version.
 
 

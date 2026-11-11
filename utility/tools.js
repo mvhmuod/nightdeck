@@ -701,14 +701,132 @@
   /* ---------- notes ---------- */
   (function () {
     const root = $c("notes"); if (!root) return;
-    const status = h("span", { class: "nd-dim", text: "saved automatically" });
-    const ta = h("textarea", { class: "nd-input nd-notes", placeholder: "type your notes here...", spellcheck: "false" });
-    ta.value = store.get("notes", ""); let t = null;
-    ta.addEventListener("input", () => {
-      status.textContent = "saving..."; clearTimeout(t);
-      t = setTimeout(() => { store.set("notes", ta.value); status.textContent = "saved " + new Date().toTimeString().slice(0, 8); }, 400);
+    const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const two = n => String(n).padStart(2, "0");
+    const stamp = ms => { const d = new Date(ms); return two(d.getDate()) + "." + two(d.getMonth() + 1) + "." + d.getFullYear() + " " + two(d.getHours()) + ":" + two(d.getMinutes()); };
+    let notes = store.get("notes2", null), fresh = false;
+    if (!Array.isArray(notes)) { // first start with several notes: the old single note becomes the first one
+      const old = String(store.get("notes", "") || ""); fresh = !old;
+      notes = [{ id: uid(), title: "notes", text: old, pinned: false, locked: false, changed: Date.now() }];
+    }
+    let cur = store.get("notescur", null), query = "", check = false, sureDel = false, saveT = null, fileT = null, font = store.get("notesfont", "s");
+    const shown = {}; // locked notes that were opened in this session
+    if (!notes.some(n => n.id === cur)) cur = notes.length ? notes[0].id : null;
+    const get = () => notes.find(n => n.id === cur) || null;
+    const status = h("span", { class: "nd-dim", text: "saved automatically" }), info = h("span", { class: "nd-dim" });
+    function persist() { // in the app's own storage right away, and as a backup file a moment later
+      store.set("notes2", notes); store.set("notescur", cur);
+      clearTimeout(fileT); fileT = setTimeout(() => { api("notesBackup", JSON.stringify(notes)).catch(() => {}); }, 1500);
+    }
+    function touch(n) {
+      n.changed = Date.now(); status.textContent = "saving..."; clearTimeout(saveT);
+      saveT = setTimeout(() => { persist(); status.textContent = "saved " + new Date().toTimeString().slice(0, 8); renderList(); }, 400);
+      details();
+    }
+    const search = h("input", { class: "nd-input", placeholder: "search notes", spellcheck: "false" });
+    search.addEventListener("input", () => { query = search.value.trim().toLowerCase(); renderList(); });
+    const list = h("div", { class: "nd-nlist" });
+    const title = h("input", { class: "nd-input nd-grow", placeholder: "title", maxlength: "60", spellcheck: "false" });
+    const ta = h("textarea", { class: "nd-input nd-notes", placeholder: "type here...  lines that start with \"- \" become a to-do list (press checklist)", spellcheck: "false" });
+    const todos = h("div", { class: "nd-ntodos" }), cover = h("div", { class: "nd-ncover", text: "locked - click to show" });
+    title.addEventListener("input", () => { const n = get(); if (n) { n.title = title.value; touch(n); } });
+    ta.addEventListener("input", () => { const n = get(); if (n) { n.text = ta.value; touch(n); } });
+    cover.addEventListener("click", () => { if (cur) { shown[cur] = true; renderNote(); } });
+    function select(id) { cur = id; sureDel = false; store.set("notescur", cur); renderList(); renderNote(); }
+    function add(t, text) {
+      const n = { id: uid(), title: t || "new note", text: text || "", pinned: false, locked: false, changed: Date.now() };
+      notes.push(n); persist(); select(n.id); return n;
+    }
+    function insert(s) {
+      const n = get(); if (!n || (n.locked && !shown[n.id])) return;
+      if (check) n.text += (n.text && !n.text.endsWith("\n") ? "\n" : "") + s;
+      else { ta.focus(); ta.setRangeText(s, ta.selectionStart, ta.selectionEnd, "end"); n.text = ta.value; }
+      touch(n); if (check) renderNote();
+    }
+    const bNew = btn("new", () => { const n = add(); log("notes: new note"); title.focus(); title.select(); return n; });
+    const bPin = btn("pin", () => { const n = get(); if (!n) return; n.pinned = !n.pinned; persist(); renderList(); renderNote(); });
+    const bLock = btn("lock", () => { const n = get(); if (!n) return; n.locked = !n.locked; delete shown[n.id]; persist(); renderList(); renderNote(); });
+    const bCheck = btn("checklist", () => { check = !check; renderNote(); });
+    const bDate = btn("date", () => insert(stamp(Date.now())));
+    const bPaste = btn("paste", async () => { try { const t = await api("clipRead"); if (t) insert(t); else log("notes: the clipboard has no text"); } catch (e) { log("notes: " + e.message); } });
+    const bExport = btn("export", async () => {
+      const n = get(); if (!n) return;
+      try { const f = await api("notesExport", n.title, n.text); if (f) log("notes: saved " + f); } catch (e) { log("notes: could not save the file - " + e.message); }
     });
-    root.append(ta, status);
+    const bImport = btn("import", async () => {
+      try { const f = await api("notesImport"); if (f) { add(f.name, f.text); log("notes: opened " + f.name + " as a new note"); } } catch (e) { log("notes: " + e.message); }
+    });
+    const bDel = btn("delete", () => {
+      const n = get(); if (!n) return;
+      if (!sureDel) { sureDel = true; renderNote(); return; }
+      notes = notes.filter(x => x !== n); log("notes: deleted " + (n.title || "untitled"));
+      cur = notes.length ? notes.slice().sort((a, b) => b.changed - a.changed)[0].id : null; sureDel = false; persist(); renderList(); renderNote();
+    });
+    const fonts = [["s", "S"], ["m", "M"], ["l", "L"]].map(([k, label]) => { const b = btn(label, () => { font = k; store.set("notesfont", k); renderNote(); }); b.dataset.font = k; b.title = "text size"; return b; });
+    function details() {
+      const n = get(); if (!n) { info.textContent = ""; return; }
+      const hidden = n.locked && !shown[n.id], w = (n.text.trim().match(/\S+/g) || []).length;
+      info.textContent = (hidden ? "" : w + (w === 1 ? " word, " : " words, ") + n.text.length + " characters  -  ") + "changed " + stamp(n.changed);
+    }
+    function renderList() {
+      list.textContent = "";
+      const m = notes.filter(n => !query || String(n.title).toLowerCase().includes(query) || (!n.locked && n.text.toLowerCase().includes(query)))
+        .sort((a, b) => (Number(b.pinned) - Number(a.pinned)) || (b.changed - a.changed));
+      if (!m.length) list.append(h("span", { class: "nd-dim", text: query ? "nothing found" : "no notes" }));
+      for (const n of m) {
+        const first = n.locked ? "locked" : (n.text.split("\n").find(l => l.trim()) || "empty").replace(/^\s*- (\[[ xX]\] )?/, "").slice(0, 40);
+        const el = h("div", { class: "nd-nitem" + (n.id === cur ? " nd-on" : ""), title: n.title }, (n.pinned ? "* " : "") + (n.title || "untitled"), h("small", { text: first }));
+        el.addEventListener("click", () => select(n.id));
+        list.append(el);
+      }
+    }
+    function drawTodos(n) {
+      todos.textContent = "";
+      const lines = n.text.split("\n"); let any = false;
+      lines.forEach((ln, i) => {
+        const m = /^(\s*)- (?:\[( |x|X)\] )?(.*)$/.exec(ln);
+        if (m) {
+          any = true;
+          const done = String(m[2] || "").toLowerCase() === "x", cb = h("input", { type: "checkbox" }); cb.checked = done;
+          cb.addEventListener("change", () => { lines[i] = m[1] + "- [" + (cb.checked ? "x" : " ") + "] " + m[3]; n.text = lines.join("\n"); ta.value = n.text; touch(n); drawTodos(n); });
+          todos.append(h("label", { class: "nd-ntodo" + (done ? " nd-done" : "") }, cb, h("span", { text: m[3] })));
+        } else if (ln.trim()) todos.append(h("div", { class: "nd-ntext", text: ln }));
+      });
+      if (!any) todos.append(h("span", { class: "nd-dim", text: "no to-do lines yet - add one below, or start a line with \"- \"" }));
+      const item = h("input", { class: "nd-input nd-grow", placeholder: "new to-do", maxlength: "200" });
+      const addItem = () => { const v = item.value.trim(); if (!v) return; n.text += (n.text && !n.text.endsWith("\n") ? "\n" : "") + "- [ ] " + v; ta.value = n.text; touch(n); drawTodos(n); const el = todos.querySelector(".nd-nadd input"); if (el) el.focus(); };
+      item.addEventListener("keydown", e => { if (e.key === "Enter") addItem(); });
+      todos.append(h("div", { class: "nd-row nd-nadd" }, item, btn("add", addItem)));
+    }
+    function renderNote() {
+      const n = get(), hidden = !!n && n.locked && !shown[n.id];
+      for (const el of [title, bPin, bLock, bCheck, bDate, bPaste, bExport, bDel]) el.disabled = !n;
+      title.value = n ? n.title : ""; ta.value = n ? n.text : "";
+      bPin.classList.toggle("nd-on", !!n && n.pinned); bLock.classList.toggle("nd-on", !!n && n.locked); bCheck.classList.toggle("nd-on", check);
+      bDel.textContent = sureDel ? "really delete?" : "delete"; bDel.classList.toggle("nd-danger", sureDel);
+      for (const b of fonts) b.classList.toggle("nd-on", b.dataset.font === font);
+      for (const el of [ta, todos]) { el.classList.remove("nd-nf-s", "nd-nf-m", "nd-nf-l"); el.classList.add("nd-nf-" + font); }
+      cover.style.display = hidden ? "" : "none";
+      ta.style.display = n && !hidden && !check ? "" : "none";
+      todos.style.display = n && !hidden && check ? "" : "none";
+      if (n && !hidden && check) drawTodos(n);
+      if (!n) { cover.style.display = ""; cover.textContent = "no note selected - press new"; } else cover.textContent = "locked - click to show";
+      details();
+    }
+    root.append(h("div", { class: "nd-nwrap" },
+      h("div", { class: "nd-nside" }, search, h("div", { class: "nd-row" }, bNew, bImport), list),
+      h("div", { class: "nd-nmain" },
+        h("div", { class: "nd-row" }, title, bPin, bLock, bDel),
+        h("div", { class: "nd-row" }, bCheck, bDate, bPaste, bExport, h("span", { class: "nd-dim", text: "size" }), fonts),
+        ta, todos, cover, h("div", { class: "nd-row" }, info, status))));
+    renderList(); renderNote();
+    if (fresh) api("notesRestore").then(saved => { // nothing stored yet: bring the backup file back, if there is one
+      if (Array.isArray(saved) && saved.length && notes.length === 1 && !notes[0].text) {
+        notes = saved.filter(n => n && n.id).map(n => ({ id: String(n.id), title: String(n.title || ""), text: String(n.text || ""), pinned: !!n.pinned, locked: !!n.locked, changed: Number(n.changed) || Date.now() }));
+        cur = notes.length ? notes[0].id : null; store.set("notes2", notes); renderList(); renderNote(); log("notes: restored " + notes.length + " from the backup file");
+      }
+    }).catch(() => {});
+    else persist();
   })();
 
   /* ---------- timers ---------- */

@@ -1133,6 +1133,25 @@ const API = {
       "[Windows.ApplicationModel.DataTransfer.Clipboard]::ClearHistory()"], 15000);
     return { windows: r.ok && /true/i.test(r.out) };
   },
+  // notes: a backup copy next to the app's settings, plus saving and opening text files
+  notesBackup(json) {
+    json = String(json); if (json.length > 5000000) throw new Error("the notes are too large to back up");
+    JSON.parse(json); fs.writeFileSync(path.join(app.getPath("userData"), "notes-backup.json"), json); return true;
+  },
+  notesRestore() { try { const j = JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), "notes-backup.json"), "utf8")); return Array.isArray(j) ? j : null; } catch (e) { return null; } },
+  async notesExport(title, text) {
+    const safe = String(title || "note").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 60) || "note";
+    const r = await dialog.showSaveDialog(main, { defaultPath: path.join(app.getPath("documents"), safe + ".txt"), filters: [{ name: "Text", extensions: ["txt"] }] });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, String(text).replace(/\r?\n/g, WIN ? "\r\n" : "\n"), "utf8"); return r.filePath;
+  },
+  async notesImport() {
+    const r = await dialog.showOpenDialog(main, { properties: ["openFile"], filters: [{ name: "Text", extensions: ["txt", "md", "log", "csv"] }] });
+    if (r.canceled || !r.filePaths.length) return null;
+    const f = r.filePaths[0]; if (fs.statSync(f).size > 1048576) throw new Error("that file is larger than 1 MB");
+    return { name: path.basename(f).replace(/\.[^.]+$/, "").slice(0, 60), text: fs.readFileSync(f, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n") };
+  },
+  clipRead() { try { return clipboard.readText(); } catch (e) { return ""; } },
   copyText(t) { t = String(t); lastClip = t; clipboard.writeText(t); return true; },
   timerDone(label) {
     try { shell.beep(); } catch (e) {}
