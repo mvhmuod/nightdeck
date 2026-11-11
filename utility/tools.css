@@ -106,6 +106,9 @@ select.nd-input{max-width:190px}
 .nd-plist{max-height:190px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:#39424a transparent}
 .nd-tr.nd-pick{grid-template-columns:minmax(0,1fr) 56px}
 .nd-tr.nd-pick>span:nth-child(2){text-align:right}
+/* power tab */
+input[type=time].nd-input,input[type=number].nd-input{color-scheme:dark}
+.nd-num{width:64px}
 /* network tab */
 .nd-netbars{gap:9px 18px}
 .nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}

@@ -513,20 +513,111 @@
   /* ---------- power ---------- */
   (function () {
     const root = $c("power"); if (!root) return;
-    const acts = [["lock", "lock"], ["sleep", "sleep"], ["restart", "restart"], ["shutdown", "shut down"]];
+    const acts = [["lock", "lock"], ["sleep", "sleep"], ["hibernate", "hibernate"], ["signout", "sign out"], ["screenoff", "screens off"],
+      ["restart", "restart"], ["shutdown", "shut down"], ["bios", "restart to bios"]];
+    const label = id => (acts.find(a => a[0] === id) || [id, id])[1];
+    const dim = t => h("span", { class: "nd-dim", text: t });
+    const two = n => String(n).padStart(2, "0");
     const row = h("div", { class: "nd-row" }), confirm = h("div", { class: "nd-row" });
     let timer = null;
     function cancel() { clearTimeout(timer); confirm.textContent = ""; }
-    for (const [id, label] of acts) row.append(btn(label, () => {
+    async function doNow(id) {
+      log("power: " + label(id) + " requested");
+      try { const r = await api("power", id); if (!r.ok) log("power: " + r.msg); } catch (e) { log("power failed: " + e.message); }
+    }
+    for (const [id, text] of acts) row.append(btn(text, () => {
       cancel();
-      confirm.append(h("span", { text: label + " this PC now?" }),
-        btn("yes, " + label, async () => {
-          cancel(); log("power: " + label + " requested");
-          try { const r = await api("power", id); if (!r.ok) log("power: " + r.msg); } catch (e) { log("power failed: " + e.message); }
-        }, "nd-danger"), btn("cancel", cancel));
+      if (id === "screenoff") { doNow(id); return; }
+      confirm.append(h("span", { text: id === "bios" ? "restart this PC into its setup screen (bios) now?" : text + " this PC now?" }),
+        btn("yes, " + text, () => { cancel(); doNow(id); }, "nd-danger"), btn("cancel", cancel));
       timer = setTimeout(cancel, 8000);
     }));
-    root.append(row, confirm, h("span", { class: "nd-dim", text: "restart and shut down close every program - save your work first." }));
+
+    // timer: after some minutes, or at a clock time
+    let sched = null;
+    const tAct = h("select", { class: "nd-input" });
+    for (const id of ["shutdown", "sleep", "hibernate", "restart", "lock"]) tAct.append(h("option", { value: id, text: label(id) }));
+    const tMin = h("input", { class: "nd-input nd-num", type: "number", min: "1", max: "1440", value: store.get("pmin", "30") });
+    const tAt = h("input", { class: "nd-input", type: "time" });
+    const tState = dim("no timer set");
+    const tCancel = btn("cancel timer", async () => { try { await api("powerTimer", "cancel"); log("power timer cancelled"); } catch (e) {} sched = null; drawTimer(); }, "nd-danger");
+    function drawTimer() {
+      if (!sched || sched.at <= Date.now()) { tState.textContent = "no timer set"; tCancel.style.display = "none"; return; }
+      const s = Math.max(0, Math.round((sched.at - Date.now()) / 1000)), d = new Date(sched.at);
+      tState.textContent = label(sched.action) + " in " + (s >= 3600 ? Math.floor(s / 3600) + ":" + two(Math.floor(s % 3600 / 60)) : Math.floor(s / 60)) + ":" + two(s % 60) +
+        "   (at " + two(d.getHours()) + ":" + two(d.getMinutes()) + ")";
+      tCancel.style.display = "";
+    }
+    async function setTimer(at) {
+      try { sched = await api("powerTimer", "set", tAct.value, at); const d = new Date(sched.at); log("power timer: " + label(sched.action) + " at " + two(d.getHours()) + ":" + two(d.getMinutes())); }
+      catch (e) { log("power timer: " + e.message); }
+      drawTimer();
+    }
+    const bIn = btn("start", () => {
+      const m = Math.round(Number(tMin.value));
+      if (!(m >= 1 && m <= 1440)) { log("power timer: enter 1 to 1440 minutes"); return; }
+      store.set("pmin", String(m)); setTimer(Date.now() + m * 60000);
+    });
+    const bAt = btn("set", () => {
+      const m = /^(\d\d):(\d\d)/.exec(tAt.value); if (!m) { log("power timer: pick a time first"); return; }
+      const d = new Date(); d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+      if (d.getTime() <= Date.now() + 5000) d.setDate(d.getDate() + 1);
+      setTimer(d.getTime());
+    });
+
+    // power plans
+    const plans = h("div", { class: "nd-row" });
+    async function loadPlans() {
+      try {
+        const r = await api("powerPlans"); plans.textContent = "";
+        if (r.msg) { plans.append(dim(r.msg)); return; }
+        if (!r.list.length) plans.append(dim("no power plans reported"));
+        for (const p of r.list) {
+          const b = btn(String(p.name).toLowerCase(), async () => {
+            try { const x = await api("powerPlan", p.id); log(x.ok ? "power plan: " + p.name : "power plan: " + x.msg); } catch (e) { log("power plan: " + e.message); }
+            loadPlans();
+          });
+          if (p.active) b.classList.add("nd-on");
+          plans.append(b);
+        }
+      } catch (e) { plans.textContent = e.message; }
+    }
+
+    // keep awake, start time, pending shutdown
+    const bAwake = btn("keep pc and screens awake", async () => {
+      try { const on = await api("keepAwake", !bAwake.classList.contains("nd-on")); bAwake.classList.toggle("nd-on", !!on); log("keep awake " + (on ? "on" : "off")); }
+      catch (e) { log("keep awake: " + e.message); }
+    });
+    const iStart = h("output"), iUp = h("output");
+    async function info() {
+      try {
+        const s = await api("sys"), d = new Date(Date.now() - s.uptime * 1000), u = Math.floor(s.uptime);
+        iStart.textContent = d.toLocaleDateString() + "  " + two(d.getHours()) + ":" + two(d.getMinutes());
+        iUp.textContent = (u >= 86400 ? Math.floor(u / 86400) + "d " : "") + Math.floor(u % 86400 / 3600) + "h " + two(Math.floor(u % 3600 / 60)) + "m";
+      } catch (e) {}
+    }
+    const bAbort = btn("cancel a pending windows shutdown", async () => {
+      try { const r = await api("power", "abort"); log(r.ok ? "pending windows shutdown cancelled" : "no windows shutdown was pending"); } catch (e) { log("power failed: " + e.message); }
+    });
+
+    tCancel.style.display = "none";
+    root.append(row, confirm, dim("restart and shut down close every program - save your work first."),
+      h("div", { class: "nd-sub", text: "timer" }),
+      h("div", { class: "nd-row" }, tAct, dim("in"), tMin, dim("minutes"), bIn, dim("or at"), tAt, bAt),
+      h("div", { class: "nd-row" }, tState, tCancel),
+      h("div", { class: "nd-sub", text: "power plan" }), plans,
+      h("div", { class: "nd-sub", text: "stay awake" }), h("div", { class: "nd-row" }, bAwake, dim("only while nightdeck is running")),
+      h("div", { class: "nd-sub", text: "this session" }),
+      h("div", { class: "nd-kv" }, h("div", { class: "nd-info" }, h("span", { text: "pc started" }), iStart), h("div", { class: "nd-info" }, h("span", { text: "running for" }), iUp)),
+      h("div", { class: "nd-row" }, bAbort));
+    function refresh() {
+      loadPlans(); info();
+      api("powerTimer", "get").then(s => { sched = s; drawTimer(); }).catch(() => {});
+      api("keepAwake").then(on => bAwake.classList.toggle("nd-on", !!on)).catch(() => {});
+    }
+    onTab.power = refresh; refresh();
+    setInterval(() => { drawTimer(); }, 1000);
+    setInterval(() => { if (active === "power") info(); }, 30000);
   })();
 
   /* ---------- clipboard ---------- */

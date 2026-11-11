@@ -80,7 +80,7 @@ body.nd-page{-webkit-app-region:drag;user-select:none}
 // One tab per tool. "custom" areas are filled in by tools.js.
 const panel = Nightdeck.create("#app", {
   title: "Nightdeck",
-  version: "v2.34", // bump this with every change
+  version: "v2.35", // bump this with every change
   console: false,  // the console lives in its own window
   onLog(msg) { if (window.nightdeckWindow) window.nightdeckWindow.log(msg); },
   onSelect(name) { if (window.ndTabChanged) window.ndTabChanged(name); },

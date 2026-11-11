@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, ipcMain, screen, clipboard, dialog, desktopCapturer, Notification, Tray, globalShortcut } = require("electron");
+const { app, BrowserWindow, Menu, shell, ipcMain, screen, clipboard, dialog, desktopCapturer, Notification, Tray, globalShortcut, powerSaveBlocker } = require("electron");
 const { execFile, spawn } = require("child_process");
 const netmod = require("net");
 const https = require("https");
@@ -947,8 +947,46 @@ function registerLaunchKeys() { // returns the hotkeys Windows did not accept
   return bad;
 }
 
+// ---- Power extras: timer, power plans, keep awake ----
+const POWER_TIMED = new Set(["shutdown", "restart", "sleep", "hibernate", "lock"]);
+let powerSched = null, powerSchedT = null, powerWarnT = null, awakeId = null;
+function powerTimer(cmd, action, at) { // the timer lives here, so it keeps running when the window reloads
+  if (cmd === "get") return powerSched;
+  clearTimeout(powerSchedT); clearTimeout(powerWarnT); powerSched = null;
+  if (cmd === "cancel") return null;
+  if (cmd !== "set" || !POWER_TIMED.has(action)) throw new Error("unexpected request");
+  at = Number(at); const wait = at - Date.now();
+  if (!(wait > 0 && wait <= 24 * 3600 * 1000 + 60000)) throw new Error("the time must be within the next 24 hours");
+  powerSched = { action, at };
+  powerSchedT = setTimeout(() => { powerSched = null; Promise.resolve(API.power(action)).catch(() => {}); }, wait);
+  if (wait > 70000) powerWarnT = setTimeout(() => {
+    try { new Notification({ title: "Nightdeck", body: "Timer: " + action + " in one minute. Open the power tab to cancel." }).show(); } catch (e) {}
+  }, wait - 60000);
+  return powerSched;
+}
+async function powerPlans() {
+  if (!WIN) return { list: [], msg: "only available on Windows" };
+  const r = await run("powercfg.exe", ["/list"], 10000), list = [];
+  const re = /([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\s+\((.+?)\)\s*(\*)?/gi; let m;
+  while ((m = re.exec(r.out))) list.push({ id: m[1].toLowerCase(), name: m[2], active: !!m[3] });
+  return { list };
+}
+async function powerPlan(id) {
+  id = String(id).toLowerCase();
+  const p = await powerPlans();
+  if (!p.list.some(x => x.id === id)) throw new Error("unknown power plan");
+  const r = await run("powercfg.exe", ["/setactive", id], 10000);
+  return { ok: r.ok, msg: r.ok ? "" : (r.err || r.out || "windows did not accept the change").trim().split(/\r?\n/)[0] };
+}
+function keepAwake(on) { // stops the PC and the screens from going to sleep while Nightdeck runs
+  if (on === undefined || on === null) return awakeId !== null;
+  if (on && awakeId === null) awakeId = powerSaveBlocker.start("prevent-display-sleep");
+  if (!on && awakeId !== null) { try { powerSaveBlocker.stop(awakeId); } catch (e) {} awakeId = null; }
+  return awakeId !== null;
+}
 const API = {
   sysExtra,
+  powerTimer, powerPlans, powerPlan, keepAwake,
   sys() {
     const cpus = os.cpus();
     const disks = listDisks(), disk = disks[0] || null;
@@ -991,16 +1029,23 @@ const API = {
       lock: ["rundll32.exe", ["user32.dll,LockWorkStation"]],
       sleep: ["rundll32.exe", ["powrprof.dll,SetSuspendState", "0,1,0"]],
       restart: ["shutdown.exe", ["/r", "/t", "0"]],
-      shutdown: ["shutdown.exe", ["/s", "/t", "0"]]
+      shutdown: ["shutdown.exe", ["/s", "/t", "0"]],
+      signout: ["shutdown.exe", ["/l"]],
+      hibernate: ["shutdown.exe", ["/h"]],
+      bios: ["shutdown.exe", ["/r", "/fw", "/t", "0"]],
+      abort: ["shutdown.exe", ["/a"]],
+      screenoff: ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        "(Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool PostMessage(int hWnd, int msg, int wParam, int lParam);' -Name ScreenOff -Namespace Nightdeck -PassThru)::PostMessage(0xffff, 0x0112, 0xF170, 2) | Out-Null"]]
     };
     const c = cmds[action];
     if (!c) return { ok: false, msg: "unknown action" };
-    if (action === "sleep") {
+    if (action === "sleep" || action === "hibernate") {
       // The PC sleeps while this command runs. Waiting for it ended in a false "command failed" after waking up, so it is started without waiting.
       execFile(c[0], c[1], { windowsHide: true }, () => {});
       return { ok: true, msg: "" };
     }
     const r = await run(c[0], c[1], 15000);
+    if (action === "bios" && !r.ok) return { ok: false, msg: "windows refused - this needs administrator rights, or this PC does not support it" };
     return { ok: r.ok, msg: r.ok ? "" : (r.err || "command failed").trim().split(/\r?\n/)[0] };
   },
   clips: () => clips,

@@ -152,6 +152,15 @@ v2.34  Launcher tab rebuilt
          removed by accident.
        - Groups with a "start all" button.
        - Per shortcut: run as administrator, and a global hotkey.
+v2.35  Power tab extended
+       - Timer: shut down, sleep, hibernate, restart or lock after some
+         minutes or at a clock time, with countdown and cancel. A
+         Windows notification appears one minute before.
+       - More actions: hibernate, sign out, screens off, restart to bios.
+       - Power plan buttons, the active one is lit.
+       - "keep pc and screens awake" switch.
+       - When the PC was started and how long it has been running.
+       - Button to cancel a pending Windows shutdown.
        >> Current version.
 
 
