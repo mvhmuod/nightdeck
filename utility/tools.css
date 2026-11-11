@@ -141,6 +141,19 @@ input[type=time].nd-input,input[type=number].nd-input{color-scheme:dark}
 .nd-notes.nd-nf-s,.nd-ntodos.nd-nf-s{font-size:12px}
 .nd-notes.nd-nf-m,.nd-ntodos.nd-nf-m{font-size:14px}
 .nd-notes.nd-nf-l,.nd-ntodos.nd-nf-l{font-size:16px}
+/* timers tab */
+.nd-tlist{display:flex; flex-direction:column; gap:8px}
+.nd-trow{display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:end}
+.nd-trow .nd-btn,.nd-preset .nd-btn{padding:3px 8px}
+.nd-trow .nd-row{flex-wrap:nowrap; gap:4px}
+.nd-preset{display:inline-flex}
+.nd-preset .nd-btn:last-child{color:#7d8891; padding:3px 6px}
+.nd-tr.nd-al{grid-template-columns:54px minmax(0,1fr) 70px auto}
+.nd-tr.nd-al>span{text-align:left!important}
+.nd-tr.nd-lap{grid-template-columns:60px minmax(0,1fr) minmax(0,1fr); min-height:22px}
+.nd-laps{max-height:112px; overflow-y:auto; scrollbar-width:none; margin-top:6px}
+.nd-laps::-webkit-scrollbar{display:none}
+.nd-tab[data-badge]::after{content:attr(data-badge); font:500 11px "IBM Plex Mono",ui-monospace,monospace; color:#4fc3d9; margin-left:8px; text-shadow:none; vertical-align:2px}
 /* network tab */
 .nd-netbars{gap:9px 18px}
 .nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}

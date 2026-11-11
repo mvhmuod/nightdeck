@@ -1153,8 +1153,8 @@ const API = {
   },
   clipRead() { try { return clipboard.readText(); } catch (e) { return ""; } },
   copyText(t) { t = String(t); lastClip = t; clipboard.writeText(t); return true; },
-  timerDone(label) {
-    try { shell.beep(); } catch (e) {}
+  timerDone(label, quiet) { // quiet: the window plays its own sound
+    if (!quiet) { try { shell.beep(); } catch (e) {} }
     if (main && !main.isDestroyed()) { main.flashFrame(true); setTimeout(() => { if (main && !main.isDestroyed()) main.flashFrame(false); }, 4000); }
     try { if (Notification.isSupported()) new Notification({ title: "Nightdeck", body: String(label || "Timer finished") }).show(); } catch (e) {}
     return true;

@@ -182,6 +182,16 @@ v2.37  Notes tab rebuilt
        - Insert date and time, paste from clipboard, three text sizes.
        - Lock: covers a note until clicked (a cover, not encryption).
        The old single note became the first note.
+v2.38  Timers tab rebuilt
+       - Several named countdowns at once, each with pause, restart and
+         a progress bar. Presets (1 to 60 minutes) plus your own.
+       - Alarms at a clock time, once or every day.
+       - Finish signal: Windows notification, and a sound (chime, alarm,
+         beep or silent) that repeats until "stop sound" is pressed.
+       - Stopwatch with laps.
+       - Pomodoro: 25 minutes work, 5 break, long break after 4 rounds.
+       - Everything keeps running across tabs, "update" and a restart.
+       - The nearest timer's remaining time shows next to the tab name.
        >> Current version.
 
 

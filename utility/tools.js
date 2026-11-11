@@ -832,42 +832,177 @@
   /* ---------- timers ---------- */
   (function () {
     const root = $c("timers"); if (!root) return;
-    const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); const hh = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
-      return (hh ? hh + ":" : "") + String(m).padStart(2, "0") + ":" + String(ss).padStart(2, "0"); };
-    const fmtSw = ms => { const t = Math.floor(ms / 100); return String(Math.floor(t / 600)).padStart(2, "0") + ":" + String(Math.floor(t / 10) % 60).padStart(2, "0") + "." + (t % 10); };
+    const two = n => String(n).padStart(2, "0"), uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    const dim = t => h("span", { class: "nd-dim", text: t }), sub = t => h("div", { class: "nd-sub", text: t });
     const MAXCD = 359999000; // longest countdown: 99:59:59
-    function parse(v) { v = v.trim(); if (!v) return 0; const p = v.split(":").map(Number); if (p.some(n => !isFinite(n) || n < 0)) return 0;
-      if (p.length > 3) return 0;
-      return Math.min(MAXCD, Math.round((p.length === 1 ? p[0] * 60 : p.length === 2 ? p[0] * 60 + p[1] : p[0] * 3600 + p[1] * 60 + p[2]) * 1000)); }
-    // countdown
-    if (String(store.get("cd", "5")).length > 8) store.set("cd", "5"); // drop an over-long saved value
-    const cdIn = h("input", { class: "nd-input", value: store.get("cd", "5"), placeholder: "minutes or m:ss", size: "10", maxlength: "8" });
-    const cdOut = h("div", { class: "nd-big", text: "00:00" });
-    let cdLeft = 0, cdEnd = 0, cdRun = false;
-    const cdGo = btn("start", () => {
-      if (cdRun) { cdLeft = cdEnd - Date.now(); cdRun = false; }
-      else { if (cdLeft <= 0) { cdLeft = parse(cdIn.value); store.set("cd", cdIn.value); if (cdLeft <= 0) { log("timer: enter minutes, or m:ss"); return; } log("timer started: " + fmt(cdLeft)); }
-        cdEnd = Date.now() + cdLeft; cdRun = true; }
-      draw();
-    }, "nd-on");
-    const cdReset = btn("reset", () => { cdRun = false; cdLeft = 0; draw(); });
-    // stopwatch
-    const swOut = h("div", { class: "nd-big", text: "00:00.0" });
-    let swBase = 0, swStart = 0, swRun = false;
-    const swGo = btn("start", () => { if (swRun) { swBase += Date.now() - swStart; swRun = false; log("stopwatch stopped at " + fmtSw(swBase)); } else { swStart = Date.now(); swRun = true; } draw(); }, "nd-on");
-    const swReset = btn("reset", () => { swRun = false; swBase = 0; draw(); });
-    function draw() {
-      if (cdRun && Date.now() >= cdEnd) { cdRun = false; cdLeft = 0; log("timer finished"); api("timerDone", "Timer finished").catch(() => {}); }
-      cdOut.textContent = fmt(cdRun ? cdEnd - Date.now() : cdLeft > 0 ? cdLeft : parse(cdIn.value));
-      cdGo.textContent = cdRun ? "pause" : cdLeft > 0 ? "resume" : "start";
-      swOut.textContent = fmtSw(swBase + (swRun ? Date.now() - swStart : 0));
-      swGo.textContent = swRun ? "stop" : swBase ? "resume" : "start";
+    const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)), hh = Math.floor(s / 3600); return (hh ? hh + ":" + two(Math.floor(s % 3600 / 60)) : Math.floor(s / 60)) + ":" + two(s % 60); };
+    const fmtSw = ms => { const t = Math.floor(ms / 100), s = Math.floor(t / 10), hh = Math.floor(s / 3600); return (hh ? hh + ":" + two(Math.floor(s % 3600 / 60)) : two(Math.floor(s / 60))) + ":" + two(s % 60) + "." + (t % 10); };
+    function parse(v) {
+      v = String(v).trim(); if (!v) return 0;
+      const p = v.split(":").map(Number); if (p.length > 3 || p.some(x => !isFinite(x) || x < 0)) return 0;
+      return Math.min(MAXCD, Math.round((p.length === 1 ? p[0] * 60 : p.length === 2 ? p[0] * 60 + p[1] : p[0] * 3600 + p[1] * 60 + p[2]) * 1000));
     }
-    cdIn.addEventListener("input", draw);
-    root.append(h("div", { class: "nd-two" },
-      h("div", null, h("div", { class: "nd-sub", text: "countdown" }), cdOut, h("div", { class: "nd-row" }, cdIn, cdGo, cdReset)),
-      h("div", null, h("div", { class: "nd-sub", text: "stopwatch" }), swOut, h("div", { class: "nd-row" }, swGo, swReset))));
-    draw(); setInterval(draw, 100);
+    // everything is remembered, so timers keep running across tab changes, "update" and a restart of the app
+    let st = store.get("timers3", null); if (!st || typeof st !== "object") st = {};
+    st.timers = Array.isArray(st.timers) ? st.timers : []; st.alarms = Array.isArray(st.alarms) ? st.alarms : []; st.presets = Array.isArray(st.presets) ? st.presets : [];
+    st.sw = st.sw || { start: null, acc: 0, laps: [] }; st.sound = st.sound || "chime";
+    const POMO = { work: 25 * 60000, break: 5 * 60000, long: 15 * 60000 };
+    st.pomo = st.pomo || { state: "idle", phase: "work", round: 1, end: null, left: POMO.work };
+    const save = () => store.set("timers3", st);
+
+    // finish signal: a Windows notification, the window flashes, and a sound that repeats until stopped
+    let actx = null, ringT = null;
+    function tone(kind) {
+      if (kind === "silent") return;
+      try {
+        actx = actx || new (window.AudioContext || window.webkitAudioContext)(); const t0 = actx.currentTime;
+        const notes = kind === "alarm" ? [[880, 0, .14], [880, .2, .14], [880, .4, .14], [880, .6, .14]] : kind === "beep" ? [[1000, 0, .25]] : [[660, 0, .22], [880, .24, .22], [1320, .48, .4]];
+        for (const [f, at, len] of notes) {
+          const o = actx.createOscillator(), g = actx.createGain(); o.type = kind === "alarm" ? "square" : "sine"; o.frequency.value = f;
+          g.gain.setValueAtTime(0.0001, t0 + at); g.gain.exponentialRampToValueAtTime(kind === "alarm" ? 0.12 : 0.25, t0 + at + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len);
+          o.connect(g); g.connect(actx.destination); o.start(t0 + at); o.stop(t0 + at + len + 0.05);
+        }
+      } catch (e) {}
+    }
+    const bStop = btn("stop sound", () => stopRing(), "nd-danger");
+    function stopRing() { clearInterval(ringT); ringT = null; bStop.style.display = "none"; }
+    function ring(text) {
+      api("timerDone", text, true).catch(() => {}); log(text); stopRing();
+      if (st.sound === "silent") return;
+      tone(st.sound); let n = 0;
+      ringT = setInterval(() => { if (++n >= 30) stopRing(); else tone(st.sound); }, 2000); bStop.style.display = "";
+    }
+    const sSound = h("select", { class: "nd-input", title: "sound when a timer ends" });
+    for (const k of ["chime", "alarm", "beep", "silent"]) sSound.append(h("option", { value: k, text: k }));
+    sSound.value = st.sound; sSound.addEventListener("change", () => { st.sound = sSound.value; save(); });
+
+    // countdowns
+    const tList = h("div", { class: "nd-tlist" }), presetRow = h("div", { class: "nd-row" });
+    const tName = h("input", { class: "nd-input", placeholder: "name (optional)", maxlength: "30", size: "16" });
+    const tTime = h("input", { class: "nd-input", placeholder: "minutes or m:ss", size: "14", maxlength: "8" });
+    tTime.value = String(store.get("cd", "5")).slice(0, 8);
+    function addTimer(ms, name) {
+      if (!ms) { log("timers: enter minutes, or m:ss"); return; }
+      const nm = String(name || "").trim() || fmt(ms) + " timer";
+      st.timers.push({ id: uid(), name: nm, total: ms, end: Date.now() + ms, left: ms, state: "run" }); save(); log("timer started: " + nm); drawTimers();
+    }
+    const addFromForm = () => { store.set("cd", tTime.value.trim()); addTimer(parse(tTime.value), tName.value); tName.value = ""; };
+    tTime.addEventListener("keydown", e => { if (e.key === "Enter") addFromForm(); });
+    function drawPresets() {
+      presetRow.textContent = "";
+      for (const m of [1, 5, 10, 15, 30, 60]) presetRow.append(btn(m + " min", () => { addTimer(m * 60000, tName.value); tName.value = ""; }));
+      st.presets.forEach((ms, i) => presetRow.append(h("span", { class: "nd-preset" },
+        btn(fmt(ms), () => { addTimer(ms, tName.value); tName.value = ""; }), h("button", { class: "nd-btn", text: "x", title: "Remove this preset", onclick: () => { st.presets.splice(i, 1); save(); drawPresets(); } }))));
+    }
+    const bPreset = btn("save as preset", () => {
+      const ms = parse(tTime.value); if (!ms) { log("timers: enter minutes, or m:ss"); return; }
+      if (!st.presets.includes(ms)) { st.presets.push(ms); st.presets = st.presets.slice(-8); save(); drawPresets(); }
+    });
+    function drawTimers() {
+      tList.textContent = "";
+      if (!st.timers.length) tList.append(dim("no countdown yet - press a preset or add one"));
+      for (const t of st.timers) {
+        const acts = h("span", { class: "nd-row" });
+        if (t.state === "run") acts.append(btn("pause", () => { t.left = Math.max(0, t.end - Date.now()); t.state = "pause"; save(); drawTimers(); }));
+        else if (t.state === "pause") acts.append(btn("resume", () => { t.end = Date.now() + t.left; t.state = "run"; save(); drawTimers(); }, "nd-on"));
+        acts.append(btn("restart", () => { t.left = t.total; t.end = Date.now() + t.total; t.state = "run"; stopRing(); save(); drawTimers(); }),
+          h("button", { class: "nd-btn", text: "x", title: "Remove", onclick: () => { st.timers = st.timers.filter(x => x !== t); stopRing(); save(); drawTimers(); } }));
+        tList.append(h("div", { class: "nd-trow" },
+          h("div", { class: "nd-meter", "data-meter": "tm-" + t.id }, h("div", null, t.name, h("output")), h("div", { class: "nd-meterbar" }, h("i"))), acts));
+      }
+      tick();
+    }
+
+    // alarms at a clock time
+    const aList = h("div", { class: "nd-table" }), aTime = h("input", { class: "nd-input", type: "time" });
+    const aName = h("input", { class: "nd-input", placeholder: "name (optional)", maxlength: "30", size: "16" });
+    let aRepeat = false; const bRepeat = btn("every day", () => { aRepeat = !aRepeat; bRepeat.classList.toggle("nd-on", aRepeat); });
+    function drawAlarms() {
+      aList.textContent = "";
+      if (!st.alarms.length) aList.append(dim("no alarm set"));
+      for (const a of st.alarms.slice().sort((x, y) => x.time.localeCompare(y.time))) {
+        const b = btn(a.on ? "on" : "off", () => { a.on = !a.on; a.last = ""; save(); drawAlarms(); }); if (a.on) b.classList.add("nd-on");
+        aList.append(h("div", { class: "nd-tr nd-al" }, h("span", { text: a.time }), h("span", { text: a.name || "alarm" }), h("span", { class: "nd-dim", text: a.repeat ? "every day" : "once" }),
+          h("span", { class: "nd-row" }, b, h("button", { class: "nd-btn", text: "x", title: "Remove", onclick: () => { st.alarms = st.alarms.filter(x => x !== a); save(); drawAlarms(); } }))));
+      }
+    }
+    const bAlarm = btn("add alarm", () => {
+      if (!/^\d\d:\d\d/.test(aTime.value)) { log("timers: pick a time for the alarm"); return; }
+      const t = aTime.value.slice(0, 5), now = new Date();
+      // an alarm for a time that has already passed today waits for tomorrow
+      st.alarms.push({ id: uid(), time: t, name: aName.value.trim(), repeat: aRepeat, on: true, last: t <= two(now.getHours()) + ":" + two(now.getMinutes()) ? now.toDateString() : "" });
+      save(); log("alarm set for " + t); aName.value = ""; drawAlarms();
+    });
+
+    // stopwatch with laps
+    const swOut = h("div", { class: "nd-big", text: "00:00.0" }), laps = h("div", { class: "nd-table nd-laps" });
+    const swTotal = () => st.sw.acc + (st.sw.start ? Date.now() - st.sw.start : 0);
+    const bSw = btn("start", () => { if (st.sw.start) { st.sw.acc = swTotal(); st.sw.start = null; } else st.sw.start = Date.now(); save(); drawSw(); });
+    const bLap = btn("lap", () => { if (!st.sw.start) return; st.sw.laps.push(swTotal()); st.sw.laps = st.sw.laps.slice(-50); save(); drawSw(); });
+    const bSwReset = btn("reset", () => { st.sw = { start: null, acc: 0, laps: [] }; save(); drawSw(); });
+    function drawSw() {
+      bSw.textContent = st.sw.start ? "stop" : "start"; bSw.classList.toggle("nd-on", !st.sw.start); bLap.disabled = !st.sw.start;
+      laps.textContent = "";
+      st.sw.laps.forEach((t, i) => laps.prepend(h("div", { class: "nd-tr nd-lap" }, h("span", { class: "nd-dim", text: "lap " + (i + 1) }), h("span", { text: fmtSw(t - (i ? st.sw.laps[i - 1] : 0)) }), h("span", { text: fmtSw(t) }))));
+      swOut.textContent = fmtSw(swTotal());
+    }
+
+    // pomodoro: 25 minutes work, 5 break, a 15 minute break after four rounds
+    const pOut = h("div", { class: "nd-big", text: "25:00" }), pInfo = h("span", { class: "nd-dim" });
+    const pLeft = () => st.pomo.state === "run" ? st.pomo.end - Date.now() : st.pomo.left;
+    const bPomo = btn("start", () => {
+      const p = st.pomo;
+      if (p.state === "run") { p.left = Math.max(0, p.end - Date.now()); p.state = "pause"; } else { p.end = Date.now() + p.left; p.state = "run"; }
+      save(); drawPomo();
+    });
+    const bPomoReset = btn("reset", () => { st.pomo = { state: "idle", phase: "work", round: 1, end: null, left: POMO.work }; save(); drawPomo(); });
+    function drawPomo() {
+      const p = st.pomo;
+      bPomo.textContent = p.state === "run" ? "pause" : p.state === "pause" ? "resume" : "start"; bPomo.classList.toggle("nd-on", p.state !== "run");
+      pInfo.textContent = (p.phase === "work" ? "work" : p.phase === "long" ? "long break" : "break") + "   round " + p.round + " of 4" + (p.state === "pause" ? "   paused" : "");
+      pOut.textContent = fmt(pLeft());
+    }
+
+    const tab = document.querySelector('.nd-tab[data-tab="timers"]');
+    function tick() {
+      const now = Date.now(); let near = null;
+      for (const t of st.timers) {
+        let left = t.state === "run" ? t.end - now : t.state === "pause" ? t.left : t.state === "done" ? 0 : t.total;
+        if (t.state === "run" && left <= 0) { t.state = "done"; save(); ring(t.name + " - time is up"); drawTimers(); return; }
+        panel.setMeter("tm-" + t.id, (1 - left / t.total) * 100, t.state === "done" ? "done" : fmt(left) + (t.state === "pause" ? "  paused" : ""));
+        if (t.state === "run" && (near == null || left < near)) near = left;
+      }
+      const d = new Date(now), hm = two(d.getHours()) + ":" + two(d.getMinutes()), day = d.toDateString();
+      for (const a of st.alarms) if (a.on && a.time === hm && a.last !== day) {
+        a.last = day; if (!a.repeat) a.on = false; save(); ring((a.name || "alarm") + " - " + a.time); drawAlarms();
+      }
+      if (st.sw.start) swOut.textContent = fmtSw(swTotal());
+      const p = st.pomo;
+      if (p.state === "run") {
+        if (p.end - now <= 0) {
+          if (p.phase === "work") { p.phase = p.round % 4 === 0 ? "long" : "break"; ring("pomodoro: round " + p.round + " done - take a " + (p.phase === "long" ? "long " : "") + "break"); }
+          else { p.round = p.phase === "long" ? 1 : p.round + 1; p.phase = "work"; ring("pomodoro: break over - back to work"); }
+          p.left = POMO[p.phase]; p.end = now + p.left; save(); drawPomo();
+        }
+        pOut.textContent = fmt(p.end - now);
+        if (near == null || p.end - now < near) near = p.end - now;
+      }
+      if (tab) { if (near != null) tab.dataset.badge = fmt(near); else delete tab.dataset.badge; } // remaining time next to the tab name
+    }
+
+    // timers that ran out while Nightdeck was closed
+    for (const t of st.timers) if (t.state === "run" && t.end < Date.now() - 3000) { t.state = "done"; log(t.name + " ended while nightdeck was closed"); }
+    if (st.pomo.state === "run" && st.pomo.end < Date.now() - 3000) { st.pomo.state = "pause"; st.pomo.left = POMO[st.pomo.phase]; }
+    save(); bStop.style.display = "none";
+    root.append(sub("countdowns"),
+      h("div", { class: "nd-row" }, tName, tTime, btn("start", addFromForm, "nd-on"), bPreset), presetRow, tList,
+      h("div", { class: "nd-row" }, dim("sound"), sSound, btn("test", () => tone(st.sound)), bStop),
+      sub("alarms"), h("div", { class: "nd-row" }, aTime, aName, bRepeat, bAlarm), aList,
+      h("div", { class: "nd-two" },
+        h("div", null, sub("stopwatch"), swOut, h("div", { class: "nd-row" }, bSw, bLap, bSwReset), laps),
+        h("div", null, sub("pomodoro"), pOut, h("div", { class: "nd-row" }, bPomo, bPomoReset), pInfo)));
+    drawPresets(); drawTimers(); drawAlarms(); drawSw(); drawPomo();
+    setInterval(tick, 250);
   })();
 
   /* ---------- screenshot ---------- */
