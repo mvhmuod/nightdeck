@@ -780,7 +780,7 @@ function applyTray() {
 }
 const ACCEL = /^((Control|Ctrl|Alt|Shift|Super)\+){1,3}([A-Z0-9]|F([1-9]|1[0-2])|Space)$/i;
 function applyHotkey() {
-  globalShortcut.unregisterAll(); hotkeyOk = false;
+  globalShortcut.unregisterAll(); hotkeyOk = false; setTimeout(registerLaunchKeys, 0); // the shortcut hotkeys are put back right after
   if (settings.hotkey && ACCEL.test(settings.accel)) { try { hotkeyOk = globalShortcut.register(settings.accel, toggleAll); } catch (e) { hotkeyOk = false; } }
 }
 const LOGIN_ARGS = ["--startup"];
@@ -840,6 +840,113 @@ async function sysExtra() {
   extraCache = out;
   return out;
 }
+// ---- Launcher: open (also as administrator), icons, installed apps, hotkeys ----
+async function launchTarget(target, admin) {
+  target = String(target);
+  if (/^https?:\/\//i.test(target)) { await shell.openExternal(target); return true; }
+  if (WIN && /^shell:AppsFolder\\[\w.!\-]+$/i.test(target)) { execFile("explorer.exe", [target], { windowsHide: true }, () => {}); return true; }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(target) || /^shell:/i.test(target)) throw new Error("only http and https links are allowed");
+  if (admin && WIN) {
+    const r = await psEnv("try { Start-Process -FilePath $env:ND_T -Verb RunAs; exit 0 } catch { exit 5 }", { ND_T: target }, 60000);
+    if (!r.ok) throw new Error("not started - the windows permission was declined");
+    return true;
+  }
+  const err = await shell.openPath(target);
+  if (err) throw new Error(err);
+  return true;
+}
+const favCache = new Map();
+function fetchIcon(url, hops) { // a website's own icon as a small picture, or "" when there is none
+  return new Promise(resolve => {
+    let done = false; const fin = v => { if (!done) { done = true; resolve(v); } };
+    try {
+      const req = https.get(url, { timeout: 6000, headers: { "User-Agent": "Mozilla/5.0 Nightdeck" } }, res => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && hops > 0) {
+          res.resume(); let next = "";
+          try { next = new URL(res.headers.location, url).href; } catch (e) {}
+          if (!/^https:/i.test(next)) return fin("");
+          return fetchIcon(next, hops - 1).then(fin);
+        }
+        const type = String(res.headers["content-type"] || "").split(";")[0].trim();
+        if (res.statusCode !== 200 || !/^image\//i.test(type)) { res.resume(); return fin(""); }
+        const chunks = []; let n = 0;
+        res.on("data", c => { n += c.length; if (n > 60000) { req.destroy(); fin(""); } else chunks.push(c); });
+        res.on("end", () => fin(n ? "data:" + type + ";base64," + Buffer.concat(chunks).toString("base64") : ""));
+        res.on("error", () => fin(""));
+      });
+      req.on("error", () => fin("")); req.on("timeout", () => { req.destroy(); fin(""); });
+    } catch (e) { fin(""); }
+  });
+}
+async function launchIcon(target) {
+  target = String(target);
+  if (/^https?:\/\//i.test(target)) {
+    let origin = ""; try { origin = new URL(target).origin; } catch (e) {}
+    if (!/^https:/i.test(origin)) return "";
+    if (!favCache.has(origin)) favCache.set(origin, await fetchIcon(origin + "/favicon.ico", 3));
+    return favCache.get(origin);
+  }
+  if (/^shell:/i.test(target)) return "";
+  let file = target;
+  if (WIN && /\.lnk$/i.test(file)) { try { const l = shell.readShortcutLink(file); if (l.target && fs.existsSync(l.target)) file = l.target; } catch (e) {} }
+  return fs.existsSync(file) ? await fileIcon(file) : "";
+}
+let appsCache = { t: 0, list: null };
+async function installedApps() { // what the Windows Start menu lists
+  if (!WIN) throw new Error("only available on Windows");
+  if (appsCache.list && Date.now() - appsCache.t < 60000) return appsCache.list;
+  const roots = [path.join(process.env.ProgramData || "C:\\ProgramData", "Microsoft", "Windows", "Start Menu", "Programs"),
+    path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs")];
+  const found = new Map(), skip = /\b(uninstall|deinstall|readme|license|help|documentation|manual|website|release notes)\b/i;
+  const walk = (dir, depth) => {
+    let ents = []; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (depth < 4 && !/^(startup|autostart)$/i.test(e.name)) walk(p, depth + 1); }
+      else if (/\.lnk$/i.test(e.name)) {
+        const name = e.name.replace(/\.lnk$/i, "");
+        if (!skip.test(name) && !found.has(name.toLowerCase())) found.set(name.toLowerCase(), { name, target: p });
+      }
+    }
+  };
+  for (const r of roots) walk(r, 0);
+  const list = [...found.values()];
+  await Promise.all(list.map(async a => {
+    let file = a.target;
+    try {
+      const l = shell.readShortcutLink(a.target);
+      if (l.target) { if (/\.(chm|url|txt|html?|pdf)$/i.test(l.target)) { a.drop = true; return; } if (fs.existsSync(l.target)) file = l.target; }
+    } catch (e) {}
+    a.icon = await fileIcon(file);
+  }));
+  try { // Microsoft Store apps (Windows does not hand out their icons this way)
+    const r = await psEnv("$ErrorActionPreference='SilentlyContinue'; ConvertTo-Json -Compress -InputObject @(Get-StartApps | Where-Object { $_.AppID -like '*!*' } | Select-Object Name,AppID)", null, 20000);
+    for (const s of [].concat(JSON.parse(r.out || "[]") || [])) {
+      if (!s || !s.Name || !/^[\w.!\-]+$/.test(String(s.AppID)) || found.has(String(s.Name).toLowerCase())) continue;
+      list.push({ name: String(s.Name), target: "shell:AppsFolder\\" + s.AppID, icon: "" });
+    }
+  } catch (e) {}
+  const out = list.filter(a => !a.drop).map(a => ({ name: a.name, target: a.target, icon: a.icon || "" })).sort((a, b) => a.name.localeCompare(b.name));
+  appsCache = { t: Date.now(), list: out };
+  return out;
+}
+let launchKeys = [], launchKeysOn = [];
+const LACCEL = /^((Control|Ctrl|Alt|Shift|Super)\+)+([A-Za-z0-9]|F\d{1,2})$/i;
+function registerLaunchKeys() { // returns the hotkeys Windows did not accept
+  for (const a of launchKeysOn) { try { globalShortcut.unregister(a); } catch (e) {} }
+  launchKeysOn = []; const bad = [];
+  for (const k of launchKeys) {
+    let ok = false;
+    try {
+      const own = settings && settings.hotkey && String(settings.accel).toLowerCase() === k.accel.toLowerCase();
+      if (LACCEL.test(k.accel) && !own && !globalShortcut.isRegistered(k.accel))
+        ok = globalShortcut.register(k.accel, () => { launchTarget(k.target, k.admin).catch(() => {}); });
+    } catch (e) {}
+    if (ok) launchKeysOn.push(k.accel); else bad.push(k.accel);
+  }
+  return bad;
+}
+
 const API = {
   sysExtra,
   sys() {
@@ -872,13 +979,11 @@ const API = {
     const r = await dialog.showOpenDialog(main, { properties: [kind === "folder" ? "openDirectory" : "openFile"] });
     return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
   },
-  async launch(target) {
-    target = String(target);
-    if (/^https?:\/\//i.test(target)) { await shell.openExternal(target); return true; }
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(target)) throw new Error("only http and https links are allowed");
-    const err = await shell.openPath(target);
-    if (err) throw new Error(err);
-    return true;
+  launch: (target, admin) => launchTarget(target, admin),
+  launchIcon, installedApps,
+  launchHotkeys(list) {
+    launchKeys = [].concat(list || []).slice(0, 50).map(k => ({ accel: String(k.accel), target: String(k.target), admin: !!k.admin, name: String(k.name || "") }));
+    return registerLaunchKeys();
   },
   async power(action) {
     if (!WIN) return { ok: false, msg: "only available on Windows" };

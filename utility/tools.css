@@ -92,6 +92,20 @@ select.nd-input{max-width:190px}
 .nd-path{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
 .nd-tr.nd-start{grid-template-columns:minmax(0,1fr) 70px 44px}
 .nd-tr.nd-start>span:nth-child(2){text-align:left}
+/* launcher tab */
+.nd-lgroups{display:flex; flex-direction:column; gap:8px}
+.nd-lhead{display:flex; align-items:center; gap:10px; margin-top:4px}
+.nd-lhead .nd-btn{padding:1px 8px}
+.nd-ltile{display:flex; align-items:center}
+.nd-ltile .nd-appicon{flex:none; vertical-align:0}
+.nd-launch.nd-editing .nd-ltile{border-color:#4fc3d9}
+.nd-launch .nd-btn.nd-danger:last-child{color:#ff8a80}
+.nd-launch.nd-drop .nd-ltile{border-color:#9bd64a}
+.nd-launch[draggable=true]{cursor:grab; -webkit-app-region:no-drag}
+.nd-picker{display:flex; flex-direction:column; gap:6px; border:1px solid #2a3138; padding:8px}
+.nd-plist{max-height:190px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:#39424a transparent}
+.nd-tr.nd-pick{grid-template-columns:minmax(0,1fr) 56px}
+.nd-tr.nd-pick>span:nth-child(2){text-align:right}
 /* network tab */
 .nd-netbars{gap:9px 18px}
 .nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}

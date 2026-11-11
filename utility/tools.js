@@ -382,30 +382,132 @@
   /* ---------- launcher ---------- */
   (function () {
     const root = $c("launcher"); if (!root) return;
-    let items = store.get("launch", []);
-    const grid = h("div", { class: "nd-grid" });
+    let items = store.get("launch", []), icons = store.get("launchicons", {}), edit = false, editing = -1, sure = -1, admin = false, dragFrom = -1, apps = null;
+    const grid = h("div", { class: "nd-lgroups" }), groupList = h("datalist", { id: "nd-lgroup-names" });
     const name = h("input", { class: "nd-input", placeholder: "name", maxlength: "40" });
     const target = h("input", { class: "nd-input nd-grow", placeholder: "path or website, e.g. https://example.com" });
+    const group = h("input", { class: "nd-input", placeholder: "group (optional)", maxlength: "24", size: "16", list: "nd-lgroup-names" });
+    const hotkey = h("input", { class: "nd-input", placeholder: "hotkey, e.g. Control+Alt+S", size: "24", spellcheck: "false" });
+    const bAdmin = btn("run as administrator", () => { admin = !admin; bAdmin.classList.toggle("nd-on", admin); });
+    const formTitle = h("div", { class: "nd-sub", text: "add a shortcut" });
+    const bSave = btn("add", save, "nd-on"), bCancel = btn("cancel", () => resetForm());
+    const bEdit = btn("edit", () => { edit = !edit; sure = -1; if (!edit && editing >= 0) resetForm(); else render(); });
+    const hint = h("span", { class: "nd-dim" });
     async function pick(kind) { try { const p = await api("pick", kind); if (p) { target.value = p; if (!name.value) name.value = p.split(/[\\/]/).filter(Boolean).pop().replace(/\.(exe|lnk)$/i, ""); } } catch (e) { log("browse failed: " + e.message); } }
-    function add() {
+    const noIcon = () => h("i", { class: "nd-appicon nd-noicon" });
+    const iconEl = t => icons[t] ? h("img", { class: "nd-appicon", src: icons[t], alt: "" }) : noIcon();
+    function loadIcon(it) { // looked up once per shortcut, then remembered
+      if (icons[it.target] !== undefined) return;
+      icons[it.target] = "";
+      api("launchIcon", it.target).then(src => { if (src) { icons[it.target] = src; store.set("launchicons", icons); render(); } }).catch(() => {});
+    }
+    async function pushHotkeys() {
+      try {
+        const bad = await api("launchHotkeys", items.filter(x => x.hotkey).map(x => ({ accel: x.hotkey, target: x.target, admin: !!x.admin, name: x.name })));
+        for (const b of bad || []) log("launcher: hotkey " + b + " is not available - another program or shortcut uses it");
+      } catch (e) {}
+    }
+    function commit() { store.set("launch", items); pushHotkeys(); render(); }
+    function resetForm() {
+      editing = -1; admin = false; bAdmin.classList.remove("nd-on");
+      name.value = target.value = group.value = hotkey.value = "";
+      formTitle.textContent = "add a shortcut"; bSave.textContent = "add"; bCancel.style.display = "none"; render();
+    }
+    function startEdit(i) {
+      const it = items[i]; editing = i; sure = -1;
+      name.value = it.name; target.value = it.target; group.value = it.group || ""; hotkey.value = it.hotkey || "";
+      admin = !!it.admin; bAdmin.classList.toggle("nd-on", admin);
+      formTitle.textContent = "edit shortcut"; bSave.textContent = "save"; bCancel.style.display = ""; render(); name.focus();
+    }
+    function save() {
       let t = target.value.trim(); if (!t) return;
       if (/^www\./i.test(t)) t = "https://" + t;
-      items.push({ name: name.value.trim() || t, target: t }); store.set("launch", items);
-      log("launcher: added " + (name.value.trim() || t)); name.value = ""; target.value = ""; render();
+      const hk = hotkey.value.trim();
+      if (hk && !/^((Control|Ctrl|Alt|Shift|Super)\+)+([A-Za-z0-9]|F\d{1,2})$/i.test(hk)) { log("launcher: a hotkey must look like Control+Alt+S"); return; }
+      const it = { name: name.value.trim() || t, target: t, group: group.value.trim(), admin, hotkey: hk };
+      if (editing >= 0) { items[editing] = it; log("launcher: changed " + it.name); } else { items.push(it); log("launcher: added " + it.name); }
+      store.set("launch", items); pushHotkeys(); resetForm();
     }
+    async function open(it) { try { await api("launch", it.target, !!it.admin); log("opened " + it.name); } catch (e) { log("could not open " + it.name + ": " + e.message); } }
     function render() {
-      grid.textContent = "";
-      if (!items.length) grid.append(h("span", { class: "nd-dim", text: "nothing here yet - add an app, folder or website below" }));
-      items.forEach((it, i) => grid.append(h("div", { class: "nd-launch" },
-        h("button", { class: "nd-btn", text: it.name, title: it.target, onclick: async () => {
-          try { await api("launch", it.target); log("opened " + it.name); } catch (e) { log("could not open " + it.name + ": " + e.message); } } }),
-        h("button", { class: "nd-btn", text: "x", title: "Remove", onclick: () => { items.splice(i, 1); store.set("launch", items); render(); } }))));
+      grid.textContent = ""; groupList.textContent = "";
+      bEdit.classList.toggle("nd-on", edit);
+      hint.textContent = edit ? "click a shortcut to change it, drag to move it, x to remove" : "";
+      if (!items.length) { grid.append(h("span", { class: "nd-dim", text: "nothing here yet - press add app, or add a shortcut below" })); return; }
+      const groups = [];
+      items.forEach((it, i) => { const g = it.group || ""; let e = groups.find(x => x.name === g); if (!e) groups.push(e = { name: g, list: [] }); e.list.push(i); });
+      groups.sort((a, b) => (a.name !== "") - (b.name !== ""));
+      for (const g of groups) {
+        if (g.name) {
+          groupList.append(h("option", { value: g.name }));
+          grid.append(h("div", { class: "nd-lhead" }, h("span", { class: "nd-sub", text: g.name }),
+            g.list.length > 1 && !edit ? btn("start all", async () => { for (const i of g.list) await open(items[i]); }) : null));
+        }
+        const box = h("div", { class: "nd-grid" });
+        for (const i of g.list) {
+          const it = items[i]; loadIcon(it);
+          const tile = h("div", { class: "nd-launch" + (editing === i ? " nd-editing" : "") });
+          const main = h("button", { class: "nd-btn nd-ltile", title: it.target + (it.hotkey ? "\nhotkey: " + it.hotkey : "") + (it.admin ? "\nruns as administrator" : "") }, iconEl(it.target), it.name);
+          main.addEventListener("click", () => { if (edit) startEdit(i); else open(it); });
+          tile.append(main);
+          if (edit) {
+            tile.append(h("button", { class: "nd-btn" + (sure === i ? " nd-danger" : ""), text: sure === i ? "remove?" : "x", title: "Remove", onclick: () => {
+              if (sure !== i) { sure = i; render(); return; }
+              const gone = items.splice(i, 1)[0]; delete icons[gone.target]; store.set("launchicons", icons); sure = -1;
+              log("launcher: removed " + gone.name); store.set("launch", items); pushHotkeys(); resetForm();
+            } }));
+            tile.draggable = true;
+            tile.addEventListener("dragstart", e => { dragFrom = i; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(i)); });
+            tile.addEventListener("dragover", e => { e.preventDefault(); tile.classList.add("nd-drop"); });
+            tile.addEventListener("dragleave", () => tile.classList.remove("nd-drop"));
+            tile.addEventListener("drop", e => {
+              e.preventDefault(); if (dragFrom < 0 || dragFrom === i) { dragFrom = -1; render(); return; }
+              const moved = items.splice(dragFrom, 1)[0]; moved.group = it.group || "";
+              items.splice(items.indexOf(it), 0, moved); dragFrom = -1; sure = -1;
+              store.set("launch", items); resetForm();
+            });
+          }
+          box.append(tile);
+        }
+        grid.append(box);
+      }
     }
-    target.addEventListener("keydown", e => { if (e.key === "Enter") add(); });
-    root.append(grid, h("div", { class: "nd-sub", text: "add a shortcut" }),
+    // list of installed apps to pick from
+    const picker = h("div", { class: "nd-picker" }); picker.style.display = "none";
+    const pSearch = h("input", { class: "nd-input", placeholder: "search installed apps", size: "26", spellcheck: "false" });
+    const pList = h("div", { class: "nd-table nd-plist" }), pNote = h("span", { class: "nd-dim" });
+    function drawPicker() {
+      pList.textContent = ""; if (!apps) return;
+      const q = pSearch.value.trim().toLowerCase(), have = new Set(items.map(x => String(x.target).toLowerCase()));
+      const m = apps.filter(a => !q || a.name.toLowerCase().includes(q));
+      for (const a of m.slice(0, 300)) {
+        pList.append(h("div", { class: "nd-tr nd-pick" },
+          h("span", { class: "nd-app", title: a.target }, a.icon ? h("img", { class: "nd-appicon", src: a.icon, alt: "" }) : noIcon(), a.name),
+          have.has(a.target.toLowerCase()) ? h("span", { class: "nd-dim", text: "added" }) : btn("add", () => {
+            items.push({ name: a.name, target: a.target, group: "", admin: false, hotkey: "" });
+            if (a.icon) { icons[a.target] = a.icon; store.set("launchicons", icons); }
+            log("launcher: added " + a.name); commit(); drawPicker();
+          })));
+      }
+      pNote.textContent = m.length + " of " + apps.length + " apps";
+    }
+    pSearch.addEventListener("input", drawPicker);
+    const bPick = btn("add app", async () => {
+      const show = picker.style.display === "none";
+      picker.style.display = show ? "" : "none"; bPick.classList.toggle("nd-on", show);
+      if (!show) return;
+      pSearch.focus();
+      if (!apps) { pNote.textContent = "reading installed apps..."; try { apps = await api("installedApps"); } catch (e) { pNote.textContent = e.message; return; } }
+      drawPicker();
+    });
+    picker.append(h("div", { class: "nd-row" }, pSearch, pNote), pList);
+    target.addEventListener("keydown", e => { if (e.key === "Enter") save(); });
+    bCancel.style.display = "none";
+    root.append(h("div", { class: "nd-row" }, bPick, bEdit, hint), picker, grid, formTitle,
       h("div", { class: "nd-row" }, name, target),
-      h("div", { class: "nd-row" }, btn("browse app or file", () => pick("file")), btn("browse folder", () => pick("folder")), btn("add", add, "nd-on")));
-    render();
+      h("div", { class: "nd-row" }, group, hotkey, bAdmin),
+      h("div", { class: "nd-row" }, btn("browse app or file", () => pick("file")), btn("browse folder", () => pick("folder")), bSave, bCancel), groupList);
+    render(); pushHotkeys();
   })();
 
   /* ---------- power ---------- */
