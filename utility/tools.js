@@ -623,25 +623,77 @@
   /* ---------- clipboard ---------- */
   (function () {
     const root = $c("clipboard"); if (!root) return;
-    const list = h("div", { class: "nd-table" }); let sig = "";
-    root.append(h("div", { class: "nd-row" },
-      h("span", { class: "nd-dim", text: "text you copy while nightdeck is open. kept in memory only. clear also empties the Windows history (Win + V)." }),
-      btn("clear", async () => {
-        try {
-          const r = await api("clipClear");
-          log(r && r.windows ? "clipboard cleared, including the Windows history (Win + V)" : "clipboard cleared here - the Windows history (Win + V) could not be cleared");
-          load();
-        } catch (e) { log("clear failed: " + e.message); }
-      })), list);
-    async function load() {
-      let clips; try { clips = await api("clips"); } catch (e) { list.textContent = e.message; return; }
-      const s = clips.map(c => c.time + c.text.length).join("|"); if (s === sig && list.childNodes.length) return; sig = s;
-      list.textContent = "";
-      if (!clips.length) list.append(h("span", { class: "nd-dim", text: "nothing copied yet" }));
-      clips.forEach((c, i) => list.append(h("div", { class: "nd-clip", title: "click to copy again", onclick: async () => {
-        try { await api("clipCopy", i); log("copied again: " + c.text.replace(/\s+/g, " ").slice(0, 40)); load(); } catch (e) {} } },
-        h("i", { text: c.time + " " }), c.text.replace(/\s+/g, " ").slice(0, 120))));
+    const list = h("div", { class: "nd-table" });
+    let sig = "", items = [], cfg = { max: 25, keep: false, paused: false }, query = "", open = null;
+    const two = n => String(n).padStart(2, "0");
+    const when = ms => {
+      const d = new Date(ms), t = two(d.getHours()) + ":" + two(d.getMinutes()) + ":" + two(d.getSeconds());
+      return d.toDateString() === new Date().toDateString() ? t : two(d.getDate()) + "." + two(d.getMonth() + 1) + ". " + t.slice(0, 5);
+    };
+    const refresh = () => { sig = ""; return load(); };
+    async function set(o) {
+      try {
+        cfg = await api("clipSet", o);
+        if ("paused" in o) log("clipboard recording " + (cfg.paused ? "paused" : "resumed"));
+        if ("keep" in o) log(cfg.keep ? "clipboard text history is now saved on this pc" : "clipboard history is no longer saved (pinned text still is)");
+      } catch (e) { log("clipboard: " + e.message); }
+      refresh();
     }
+    const search = h("input", { class: "nd-input", placeholder: "search clipboard", size: "18", spellcheck: "false" });
+    search.addEventListener("input", () => { query = search.value.trim(); refresh(); });
+    const bPause = btn("pause", () => set({ paused: !cfg.paused }));
+    const bKeep = btn("keep after restart", () => set({ keep: !cfg.keep }));
+    const sMax = h("select", { class: "nd-input", title: "how many entries are kept" });
+    for (const n of [25, 50, 100]) sMax.append(h("option", { value: String(n), text: n + " entries" }));
+    sMax.addEventListener("change", () => set({ max: Number(sMax.value) }));
+    const note = h("span", { class: "nd-dim" });
+    const bClear = btn("clear", async () => {
+      try {
+        const r = await api("clipClear");
+        log(r && r.windows ? "clipboard cleared, including the Windows history (Win + V)" : "clipboard cleared here - the Windows history (Win + V) could not be cleared");
+        refresh();
+      } catch (e) { log("clear failed: " + e.message); }
+    });
+    const tools = [["upper", "UPPER CASE"], ["lower", "lower case"], ["trim", "tidy spaces"], ["plain", "plain text"]];
+    function render() {
+      bPause.classList.toggle("nd-on", !!cfg.paused); bPause.textContent = cfg.paused ? "paused" : "pause";
+      bKeep.classList.toggle("nd-on", !!cfg.keep); sMax.value = String(cfg.max);
+      note.textContent = cfg.paused ? "recording is paused - nothing you copy is added."
+        : cfg.keep ? "text history is saved on this pc, pictures are not. clear keeps pinned entries."
+        : "kept in memory only; pinned text stays after a restart. clear keeps pinned entries and also empties Win + V.";
+      list.textContent = "";
+      if (!items.length) list.append(h("span", { class: "nd-dim", text: query ? "nothing matches \"" + query + "\"" : "nothing copied yet" }));
+      for (const c of items) {
+        const flat = c.kind === "text" ? c.text.replace(/\s+/g, " ") : "", one = c.kind === "text" ? c.text.trim() : "";
+        const body = h("span", { class: "nd-clipb", title: "click to copy again" },
+          c.kind === "image" ? [h("img", { class: "nd-clipimg", src: c.thumb, alt: "" }), "picture  " + c.w + " x " + c.h] : flat.slice(0, 160));
+        body.addEventListener("click", async () => {
+          try { await api("clipCopy", c.id); log("copied again: " + (c.kind === "image" ? "picture" : flat.slice(0, 40))); refresh(); } catch (e) {}
+        });
+        const extra = h("span", { class: "nd-row nd-clipx" });
+        if (/^(#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})|rgba?\([\d\s.,%\/]+\))$/i.test(one)) { const sw = h("i", { class: "nd-swatch", title: one }); sw.style.background = one; extra.append(sw); }
+        if (c.len <= 300 && /^https?:\/\/\S+$/i.test(one)) extra.append(btn("open", () => api("launch", one).then(() => log("opened " + one.slice(0, 60))).catch(e => log("could not open the link: " + e.message))));
+        if (c.kind === "text") extra.append(h("span", { class: "nd-dim", text: c.len + (c.len === 1 ? " char" : " chars") }));
+        extra.append(btn("…", () => { open = open === c.id ? null : c.id; render(); }));
+        const pin = btn(c.pinned ? "pinned" : "pin", async () => { try { await api("clipPin", c.id); } catch (e) {} refresh(); });
+        pin.title = c.pinned ? "unpin" : "keeps this entry on top and safe from clear";
+        if (c.pinned) pin.classList.add("nd-on");
+        list.append(h("div", { class: "nd-clipr" }, pin, h("i", { class: "nd-dim", text: when(c.time) }), body, extra));
+        if (open === c.id) list.append(h("div", { class: "nd-more" },
+          h("span", { class: "nd-row" }, c.kind === "text" ? tools.map(([op, label]) => btn(label, async () => {
+            try { await api("clipTool", c.id, op); log("clipboard: " + label + " version copied"); } catch (e) {}
+            open = null; refresh();
+          })) : h("span", { class: "nd-dim", text: "pictures stay in memory only" })),
+          btn("delete", async () => { try { await api("clipDelete", c.id); } catch (e) {} open = null; refresh(); }, "nd-danger")));
+      }
+    }
+    async function load() {
+      let r; try { r = await api("clips", query); } catch (e) { list.textContent = e.message; return; }
+      const s = JSON.stringify(r.cfg) + "|" + query + "|" + r.items.map(c => c.id + (c.pinned ? "p" : "") + c.time).join("|");
+      if (s === sig && list.childNodes.length) return;
+      sig = s; items = r.items; cfg = r.cfg; render();
+    }
+    root.append(h("div", { class: "nd-row" }, search, bPause, bKeep, sMax, bClear), note, list);
     onTab.clipboard = load;
     setInterval(() => { if (active === "clipboard") load(); }, 1500);
   })();

@@ -453,16 +453,63 @@ async function netDevices() {
   return list.sort((a, b) => ip4num(a.ip) - ip4num(b.ip));
 }
 
-// ---- Clipboard history (memory only, never written to disk) ----
-let clips = [], lastClip = null;
+// ---- Clipboard history ----
+// Kept in memory. Written to disk only for pinned text, and for the whole text history when
+// "keep after restart" is switched on. Pictures are never written to disk.
+const clipFile = () => path.join(app.getPath("userData"), "clipboard.json");
+let clips = [], lastClip = null, lastImg = "", clipSeq = 1, clipTick = 0, clipSaveT = null;
+let clipCfg = { max: 25, keep: false, paused: false };
+function clipLoad() {
+  try {
+    const j = JSON.parse(fs.readFileSync(clipFile(), "utf8"));
+    if (j.cfg) clipCfg = { max: [25, 50, 100].includes(j.cfg.max) ? j.cfg.max : 25, keep: !!j.cfg.keep, paused: false };
+    for (const c of [].concat(j.items || [])) if (c && typeof c.text === "string" && c.text)
+      clips.push({ id: clipSeq++, kind: "text", text: c.text.slice(0, 20000), time: Number(c.time) || Date.now(), pinned: !!c.pinned });
+  } catch (e) {}
+}
+function clipSave() {
+  clearTimeout(clipSaveT);
+  clipSaveT = setTimeout(() => {
+    try {
+      const items = clips.filter(c => c.kind === "text" && (c.pinned || clipCfg.keep)).map(c => ({ text: c.text, time: c.time, pinned: c.pinned }));
+      fs.writeFileSync(clipFile(), JSON.stringify({ cfg: { max: clipCfg.max, keep: clipCfg.keep }, items }));
+    } catch (e) {}
+  }, 500);
+}
+function clipTrim() { // pinned entries do not count against the limit; at most 10 pictures are kept
+  let n = 0, imgs = 0;
+  clips = clips.filter(c => { if (c.pinned) return true; if (c.kind === "image" && ++imgs > 10) return false; return ++n <= clipCfg.max; });
+}
+function clipImgSig(img) {
+  try { const s = img.getSize(); return s.width + "x" + s.height + ":" + require("crypto").createHash("md5").update(img.resize({ width: 24 }).toBitmap()).digest("hex"); } catch (e) { return ""; }
+}
+function clipReadImg() {
+  try { if (!clipboard.availableFormats().some(f => /^image\//i.test(f))) return null; const img = clipboard.readImage(); return img.isEmpty() ? null : img; } catch (e) { return null; }
+}
+function clipAddText(t) {
+  const old = clips.find(c => c.kind === "text" && c.text === t);
+  clips = clips.filter(c => c !== old);
+  clips.unshift({ id: clipSeq++, kind: "text", text: t.slice(0, 20000), time: Date.now(), pinned: !!(old && old.pinned) });
+  clipTrim(); clipSave();
+}
 function pollClipboard() {
   let t = ""; try { t = clipboard.readText(); } catch (e) { return; }
-  if (lastClip === null) { lastClip = t; return; } // ignore what was already there at launch
-  if (!t || t === lastClip) return;
+  if (lastClip === null) { // ignore what was already there at launch
+    lastClip = t; const img = t ? null : clipReadImg(); lastImg = img ? clipImgSig(img) : ""; return;
+  }
+  if (!t && ++clipTick % 3 === 0) { // pictures are bigger to read, so they are looked at every third second
+    const img = clipReadImg(), sig = img ? clipImgSig(img) : "";
+    if (sig && sig !== lastImg && !clipCfg.paused) {
+      const s = img.getSize();
+      clips = clips.filter(c => c.sig !== sig);
+      clips.unshift({ id: clipSeq++, kind: "image", text: "", img, sig, thumb: img.resize({ height: 44 }).toDataURL(), w: s.width, h: s.height, time: Date.now(), pinned: false });
+      clipTrim();
+    }
+    lastImg = sig;
+  }
+  if (!t || t === lastClip) { if (!t) lastClip = ""; return; }
   lastClip = t;
-  clips = clips.filter(c => c.text !== t);
-  clips.unshift({ text: t.slice(0, 20000), time: new Date().toTimeString().slice(0, 8) });
-  if (clips.length > 25) clips.length = 25;
+  if (!clipCfg.paused) clipAddText(t);
 }
 
 // ---- Screenshot ----
@@ -1048,12 +1095,38 @@ const API = {
     if (action === "bios" && !r.ok) return { ok: false, msg: "windows refused - this needs administrator rights, or this PC does not support it" };
     return { ok: r.ok, msg: r.ok ? "" : (r.err || "command failed").trim().split(/\r?\n/)[0] };
   },
-  clips: () => clips,
-  clipCopy(i) { const c = clips[i]; if (!c) return false; lastClip = c.text; clipboard.writeText(c.text); clips.splice(i, 1); clips.unshift(c); return true; },
-  // Clears this app's list, the current clipboard, and the Windows clipboard history (Win + V).
+  clips(q) {
+    q = String(q || "").toLowerCase();
+    const list = clips.filter(c => !q || (c.kind === "text" ? c.text.toLowerCase().includes(q) : "picture image".includes(q)));
+    return { cfg: clipCfg, total: clips.length, items: list.slice().sort((a, b) => Number(b.pinned) - Number(a.pinned))
+      .map(c => ({ id: c.id, kind: c.kind, text: c.text.slice(0, 300), len: c.text.length, thumb: c.thumb || "", w: c.w || 0, h: c.h || 0, time: c.time, pinned: c.pinned })) };
+  },
+  clipCopy(id) {
+    const c = clips.find(x => x.id === id); if (!c) return false;
+    if (c.kind === "image") { clipboard.writeImage(c.img); lastImg = c.sig; lastClip = ""; } else { lastClip = c.text; clipboard.writeText(c.text); }
+    c.time = Date.now(); clips = [c].concat(clips.filter(x => x !== c)); clipSave(); return true;
+  },
+  clipDelete(id) { clips = clips.filter(c => c.id !== id); clipSave(); return true; },
+  clipPin(id) { const c = clips.find(x => x.id === id); if (!c) return false; c.pinned = !c.pinned; clipTrim(); clipSave(); return c.pinned; },
+  clipSet(o) {
+    o = o || {};
+    if ([25, 50, 100].includes(o.max)) clipCfg.max = o.max;
+    if (typeof o.keep === "boolean") clipCfg.keep = o.keep;
+    if (typeof o.paused === "boolean") clipCfg.paused = o.paused;
+    clipTrim(); clipSave(); return clipCfg;
+  },
+  // changes an entry (capitals, small letters, tidy spaces, plain text) and puts the result on the clipboard
+  clipTool(id, op) {
+    const c = clips.find(x => x.id === id); if (!c || c.kind !== "text") return false;
+    const t = op === "upper" ? c.text.toUpperCase() : op === "lower" ? c.text.toLowerCase()
+      : op === "trim" ? c.text.split(/\r?\n/).map(l => l.replace(/[ \t]+/g, " ").trim()).join("\n").trim() : c.text;
+    if (!t) return false;
+    lastClip = t; clipboard.writeText(t); clipAddText(t); return true;
+  },
+  // Clears this app's list (pinned entries stay), the current clipboard, and the Windows clipboard history (Win + V).
   async clipClear() {
-    clips = [];
-    try { clipboard.clear(); lastClip = ""; } catch (e) {}
+    clips = clips.filter(c => c.pinned); clipSave();
+    try { clipboard.clear(); lastClip = ""; lastImg = ""; } catch (e) {}
     if (!WIN) return { windows: false };
     const r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
       "[Windows.ApplicationModel.DataTransfer.Clipboard,Windows.ApplicationModel.DataTransfer,ContentType=WindowsRuntime] | Out-Null; " +
@@ -1088,5 +1161,5 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", showAll);
 app.on("before-quit", () => { quitting = true; });
 app.on("will-quit", () => { try { globalShortcut.unregisterAll(); } catch (e) {} try { if (netPs) netPs.kill(); } catch (e) {} });
-app.whenReady().then(() => { loadSettings(); createWindows(); applyTray(); applyHotkey(); setInterval(pollClipboard, 1000); });
+app.whenReady().then(() => { loadSettings(); createWindows(); applyTray(); applyHotkey(); clipLoad(); setInterval(pollClipboard, 1000); });
 app.on("window-all-closed", () => app.quit());

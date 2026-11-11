@@ -109,6 +109,17 @@ select.nd-input{max-width:190px}
 /* power tab */
 input[type=time].nd-input,input[type=number].nd-input{color-scheme:dark}
 .nd-num{width:64px}
+/* clipboard tab */
+.nd-clipr{display:grid; grid-template-columns:58px 84px minmax(0,1fr) auto; gap:8px; align-items:center; padding:3px 0; border-bottom:1px solid #1e242a; min-height:27px}
+.nd-clipr .nd-btn{padding:2px 6px}
+.nd-clipr>i{font-style:normal; white-space:nowrap}
+.nd-more .nd-btn{white-space:nowrap}
+.nd-more .nd-row{flex-wrap:wrap}
+.nd-clipb{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer}
+.nd-clipb:hover{color:#4fc3d9}
+.nd-clipimg{height:22px; vertical-align:-6px; margin-right:8px; border:1px solid #2a3138}
+.nd-clipx{flex-wrap:nowrap; gap:6px}
+.nd-swatch{width:14px; height:14px; border:1px solid #2a3138; display:inline-block}
 /* network tab */
 .nd-netbars{gap:9px 18px}
 .nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}

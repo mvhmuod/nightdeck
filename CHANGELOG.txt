@@ -161,6 +161,17 @@ v2.35  Power tab extended
        - "keep pc and screens awake" switch.
        - When the PC was started and how long it has been running.
        - Button to cancel a pending Windows shutdown.
+v2.36  Clipboard tab rebuilt
+       - Search, pause recording, history size (25, 50 or 100).
+       - Pin entries: they stay on top, survive "clear" and, for text,
+         a restart.
+       - Copied pictures appear with a small preview (memory only).
+       - "keep after restart" switch saves the text history on the PC.
+         It is off by default.
+       - Each entry shows time and length; links get an "open" button,
+         colour codes a swatch.
+       - "..." on an entry: UPPER CASE, lower case, tidy spaces, plain
+         text, delete.
        >> Current version.
 
 

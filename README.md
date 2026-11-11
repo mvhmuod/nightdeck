@@ -4,7 +4,7 @@ A dark control-panel style PC utility for Windows, built with Electron. One wind
 
 ![Network tab](docs/screenshots/network.png)
 
-Current version: **v2.35**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
+Current version: **v2.36**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
 
 ## What it does
 
@@ -15,7 +15,7 @@ Current version: **v2.35**. The full history is in [CHANGELOG.txt](CHANGELOG.txt
 | network | Live download / upload bars, live ping with history, connection details, speed test, flush DNS, renew IP, device scan |
 | launcher | Your own shortcuts with icons for programs, folders and websites: pick from installed apps, groups with "start all", reorder, run as administrator, global hotkeys |
 | power | Lock, sleep, hibernate, sign out, screens off, restart, shut down (each asks first), a timer, power plans, keep awake |
-| clipboard | Clipboard history, kept in memory only |
+| clipboard | Clipboard history for text and pictures with search, pinning, pause, quick text tools and optional saving |
 | notes | A notepad that saves as you type |
 | timers | Countdown and stopwatch |
 | capture | Screenshots |
