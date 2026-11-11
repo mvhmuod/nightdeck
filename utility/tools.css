@@ -1,0 +1,85 @@
+/* Nightdeck Utility - styles for the tool tabs */
+.nd-tabs{gap:10px!important}
+.nd-custom{grid-column:1/-1; display:flex; flex-direction:column; gap:12px; -webkit-app-region:no-drag; font:500 12px "IBM Plex Mono",ui-monospace,monospace; color:#d7dde2; min-width:0}
+.nd-meter,.nd-info{-webkit-app-region:no-drag}
+.nd-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.nd-grow{flex:1; min-width:120px}
+.nd-dim{color:#7d8891}
+.nd-kv{display:flex; flex-direction:column; gap:7px}
+.nd-sub{font:500 11px "IBM Plex Mono",ui-monospace,monospace; color:#7d8891; text-transform:uppercase; letter-spacing:.12em; margin-top:6px}
+.nd-input{background:#0f1215; border:1px solid #2a3138; color:#d7dde2; font:500 12px "IBM Plex Mono",ui-monospace,monospace; padding:5px 8px; outline:none; min-width:0; user-select:text}
+.nd-input:focus{border-color:#4fc3d9}
+.nd-btn.nd-on{color:#9bd64a}
+.nd-btn.nd-danger{color:#ff8a80}
+.nd-btn:disabled{opacity:.5; cursor:default}
+.nd-table{display:flex; flex-direction:column}
+.nd-tr{display:grid; grid-template-columns:minmax(0,1fr) 60px 80px 104px; gap:8px; align-items:center; padding:3px 0; border-bottom:1px solid #1e242a; min-height:27px}
+.nd-tr>span:first-child{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.nd-tr>span:nth-child(2),.nd-tr>span:nth-child(3){text-align:right}
+.nd-th{color:#7d8891}
+/* apps tab: program icon in front of the name; a plain square when a program has none */
+.nd-appicon{width:16px; height:16px; margin-right:8px; vertical-align:-3px; display:inline-block}
+.nd-noicon{border:1px solid #2a3138; background:#1b2025; box-sizing:border-box}
+.nd-tr .nd-btn{padding:2px 8px}
+.nd-tr .nd-row{gap:4px; flex-wrap:nowrap}
+.nd-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px}
+.nd-launch{display:flex; min-width:0}
+.nd-launch .nd-btn:first-child{flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:7px 10px}
+.nd-launch .nd-btn:last-child{padding:5px 8px; color:#7d8891}
+.nd-clip{padding:5px 4px; border-bottom:1px solid #1e242a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer}
+.nd-clip:hover{color:#4fc3d9}
+.nd-clip i{color:#7d8891; font-style:normal}
+.nd-notes{width:100%; height:calc(100vh - 200px); min-height:200px; resize:none; line-height:1.5}
+.nd-two{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:24px}
+.nd-two>div{min-width:0}
+/* nothing may push a tab wider than the window (no sideways scroll bar) */
+.nd-panes .nd-pane{overflow-x:hidden}
+.nd-big{font:300 46px "Barlow Condensed","Arial Narrow",sans-serif; letter-spacing:.05em; margin:4px 0 8px; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden}
+.nd-result{color:#9bd64a; white-space:nowrap}
+.nd-color{width:44px; height:28px; padding:0; border:1px solid #000; background:none; cursor:pointer}
+.nd-meter>div:first-child{gap:10px}
+.nd-meter output{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+/* a bar that reaches 100% turns gold */
+.nd-meterbar i.nd-full{background:#e6b422}
+/* bars share the full width; drop to fewer per row before their text gets cut off */
+.nd-pane.nd-show[data-pane="system"]{display:flex; flex-wrap:wrap; align-content:flex-start}
+.nd-pane[data-pane="system"] .nd-meter{flex:1 1 200px; min-width:0}
+.nd-pane[data-pane="system"] .nd-info{flex:1 1 100%}
+/* the fill is animated in code; only the colour change is eased here */
+.nd-meterbar i{transition:background-color .25s}
+/* calculators and converters */
+.nd-modes{gap:6px; margin-bottom:4px}
+.nd-sec{display:none; flex-direction:column; gap:12px; min-width:0}
+.nd-sec.nd-show{display:flex}
+.nd-fns{gap:4px}
+.nd-fns .nd-btn{padding:4px 9px}
+.nd-graph{width:100%; height:calc(100vh - 290px); min-height:180px; background:#0f1215; border:1px solid #2a3138; display:block}
+.nd-wrap{white-space:normal!important; overflow-wrap:anywhere; text-align:right; max-width:80%}
+.nd-custom .nd-info{-webkit-app-region:no-drag}
+input[type=date].nd-input{color-scheme:dark}
+select.nd-input{max-width:190px}
+.nd-result{white-space:normal}
+/* control tab */
+.nd-grid2{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:9px 18px}
+.nd-custom .nd-slider{color:#7d8891}
+.nd-custom .nd-opt{align-items:flex-start}
+.nd-custom .nd-opt span{margin-top:3px}
+.nd-slider input:disabled{opacity:.4}
+[data-pane="control"] .nd-sub{margin-top:2px}
+[data-pane="control"] .nd-custom{gap:9px}
+/* tabs still scroll with the mouse wheel, but the scroll bar itself is not drawn */
+.nd-pane{scrollbar-width:none}
+.nd-pane::-webkit-scrollbar{display:none}
+.nd-slider>div{gap:10px}
+.nd-slider output{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+/* the tab area begins below the window buttons, so scrolled text cannot slide under them */
+.nd-panes{padding-top:16px}
+.nd-panes .nd-pane{padding-top:26px}
+/* network tab */
+.nd-netbars{gap:9px 18px}
+.nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}
+.nd-ipcopy{gap:8px; flex-wrap:nowrap; justify-content:flex-end; min-width:0}
+.nd-ipcopy .nd-btn{padding:1px 8px}
+.nd-tr.nd-dev{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) 126px}
+.nd-tr.nd-dev>span{text-align:left!important; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+[data-pane="network"] .nd-custom{gap:9px}

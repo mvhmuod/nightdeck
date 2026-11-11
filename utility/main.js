@@ -1,0 +1,851 @@
+const { app, BrowserWindow, Menu, shell, ipcMain, screen, clipboard, dialog, desktopCapturer, Notification, Tray, globalShortcut } = require("electron");
+const { execFile, spawn } = require("child_process");
+const netmod = require("net");
+const https = require("https");
+const path = require("path");
+const fs = require("fs");
+const os = require("os");
+const dns = require("dns");
+const stateFile = () => path.join(app.getPath("userData"), "relaunch-state.json");
+
+const ICON = path.join(__dirname, process.platform === "win32" ? "icon.ico" : "icon.png");
+const GAP = 12;          // space between the two panels
+const CW = 320;          // console width
+const MW = 730, MH = 620; // main panel default size
+
+let main = null, con = null, conReady = false, restore = null;
+let history = []; // console lines, kept so the console survives an in-place update
+
+// Fingerprint of the files that can only change with a full restart.
+function coreStamp() {
+  try { return ["main.js", "preload.js"].map(f => fs.readFileSync(path.join(__dirname, f), "utf8")).join("\u0000"); }
+  catch (e) { return null; }
+}
+const startStamp = coreStamp();
+
+function pairStart() {
+  const wa = screen.getPrimaryDisplay().workArea;
+  return { x: Math.round(wa.x + (wa.width - (MW + GAP + CW)) / 2), y: Math.round(wa.y + (wa.height - MH) / 2) };
+}
+
+// Keep the console glued to the right edge of the main panel, same height.
+function sync() {
+  if (!main || main.isDestroyed() || !con || con.isDestroyed()) return;
+  const b = main.getBounds();
+  const t = { x: b.x + b.width + GAP, y: b.y, width: CW, height: b.height };
+  const c = con.getBounds();
+  if (c.x !== t.x || c.y !== t.y || c.width !== t.width || c.height !== t.height) con.setBounds(t);
+}
+
+function createWindows() {
+  const startHidden = process.argv.includes("--startup") && settings.tray;
+  const web = { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true };
+  let start = pairStart(), size = { width: MW, height: MH }, showConsole = true;
+  try {
+    const st = JSON.parse(fs.readFileSync(stateFile(), "utf8"));
+    fs.unlinkSync(stateFile());
+    start = { x: st.bounds.x, y: st.bounds.y }; size = { width: st.bounds.width, height: st.bounds.height };
+    showConsole = st.console !== false;
+  } catch (e) {}
+  main = new BrowserWindow({
+    x: start.x, y: start.y, width: size.width, height: size.height, minWidth: 700, minHeight: 600,
+    show: !startHidden, titleBarStyle: "hidden", maximizable: false, icon: ICON, backgroundColor: "#15191d", title: "Nightdeck Utility", webPreferences: web
+  });
+  con = new BrowserWindow({
+    parent: main, x: start.x + size.width + GAP, y: start.y, width: CW, height: size.height,
+    icon: ICON, frame: false, resizable: false, minimizable: false, maximizable: false, skipTaskbar: true, show: false,
+    backgroundColor: "#15191d", title: "Nightdeck Utility Console", webPreferences: web
+  });
+  Menu.setApplicationMenu(null);
+  main.loadFile(path.join(__dirname, "index.html"));
+  con.loadFile(path.join(__dirname, "console.html"));
+
+  con.webContents.on("did-finish-load", () => {
+    conReady = true;
+    history.forEach(m => con.webContents.send("nd-log", m));
+  });
+  conWanted = showConsole;
+  con.once("ready-to-show", () => { sync(); if (showConsole && !startHidden) { con.show(); main.focus(); } });
+  main.on("close", e => { if (settings.tray && tray && !quitting) { e.preventDefault(); hideAll(); } });
+
+  main.on("move", sync);
+  main.on("resize", sync);
+  main.on("restore", sync);
+  // Dragging the console moves the main panel too, so they stay aligned.
+  con.on("move", () => {
+    if (!main || main.isDestroyed()) return;
+    const c = con.getBounds(), b = main.getBounds();
+    const x = c.x - GAP - b.width, y = c.y;
+    if (b.x !== x || b.y !== y) main.setPosition(x, y);
+  });
+  main.on("closed", () => { main = null; con = null; });
+
+  for (const w of [main, con])
+    w.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
+}
+
+ipcMain.on("nd-window", (event, action) => {
+  if (!main || main.isDestroyed()) return;
+  if (action === "minimize") main.minimize();
+  else if (action === "close") main.close();
+  else if (action === "maximize") {
+    // Fill the screen while leaving room for the console beside it.
+    if (restore) { main.setBounds(restore); restore = null; }
+    else {
+      restore = main.getBounds();
+      const wa = screen.getDisplayMatching(restore).workArea;
+      const side = con && !con.isDestroyed() && con.isVisible() ? GAP + CW : 0;
+      main.setBounds({ x: wa.x, y: wa.y, width: wa.width - side, height: wa.height });
+    }
+    sync();
+  } else if (action === "toggleConsole") {
+    if (!con || con.isDestroyed()) return;
+    if (con.isVisible()) { con.hide(); conWanted = false; }
+    else { conWanted = true; sync(); con.showInactive(); }
+  } else if (action === "update") {
+    // Normal case: reload both panels in place, the windows never close.
+    if (coreStamp() === startStamp) {
+      pushLog("updated - reloaded in place");
+      conReady = false;
+      main.webContents.reloadIgnoringCache();
+      if (con && !con.isDestroyed()) con.webContents.reloadIgnoringCache();
+      return;
+    }
+    // The app's core files changed: only a restart can load those.
+    try { fs.writeFileSync(stateFile(), JSON.stringify({ bounds: main.getBounds(), console: con && !con.isDestroyed() && con.isVisible() })); } catch (e) {}
+    app.relaunch();
+    app.exit(0);
+  } else if (action === "resetSize") {
+    restore = null;
+    const s = pairStart();
+    main.setBounds({ x: s.x, y: s.y, width: MW, height: MH });
+    sync();
+  }
+});
+
+function pushLog(text) {
+  const m = { t: new Date().toTimeString().slice(0, 8), text };
+  history.push(m); if (history.length > 500) history.shift();
+  if (conReady && con && !con.isDestroyed()) con.webContents.send("nd-log", m);
+}
+
+// ---- System monitor: CPU use is measured between two calls ----
+let lastCpu = null;
+function cpuPercent() {
+  let idle = 0, total = 0;
+  for (const c of os.cpus()) { for (const k in c.times) total += c.times[k]; idle += c.times.idle; }
+  let pct = 0;
+  if (lastCpu && total > lastCpu.total) pct = (1 - (idle - lastCpu.idle) / (total - lastCpu.total)) * 100;
+  lastCpu = { idle, total };
+  return pct;
+}
+const WIN = process.platform === "win32";
+function run(cmd, args, timeout = 8000) {
+  return new Promise(resolve => {
+    execFile(cmd, args, { timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) =>
+      resolve({ ok: !err, out: String(stdout || ""), err: String(stderr || (err && err.message) || "") }));
+  });
+}
+
+// ---- Running programs ----
+const PROTECTED = new Set(["system", "idle", "registry", "smss", "csrss", "wininit", "winlogon", "services", "lsass", "lsaiso",
+  "svchost", "dwm", "fontdrvhost", "memory compression", "secure system", "explorer", "sihost", "ctfmon", "audiodg", "spoolsv",
+  "systemd", "init", "xorg", "xvfb"]);
+const isProtected = n => { n = String(n).toLowerCase(); return PROTECTED.has(n) || n.startsWith("nightdeck") || n === "electron"; };
+let prevProc = null;
+// Program icons, read from the .exe once and then remembered ("" = no icon available).
+const iconCache = new Map();
+async function fileIcon(file) {
+  if (iconCache.has(file)) return iconCache.get(file);
+  let url = "";
+  try { const img = await app.getFileIcon(file, { size: "small" }); if (img && !img.isEmpty()) url = img.toDataURL(); } catch (e) {}
+  iconCache.set(file, url);
+  return url;
+}
+async function listProcs() {
+  let rows = [];
+  if (WIN) {
+    const r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "Get-Process | Select-Object Name,Id,CPU,WorkingSet64,Path | ConvertTo-Json -Compress"], 20000);
+    if (!r.out.trim()) throw new Error("could not read the program list");
+    let data = JSON.parse(r.out); if (!Array.isArray(data)) data = [data];
+    rows = data.map(p => ({ name: String(p.Name), cpu: Number(p.CPU) || 0, mem: Number(p.WorkingSet64) || 0, path: p.Path ? String(p.Path) : "" }));
+  } else {
+    const r = await run("ps", ["-eo", "comm=,cputimes=,rss="]);
+    for (const line of r.out.split("\n")) {
+      const m = /^(.*\S)\s+(\d+)\s+(\d+)\s*$/.exec(line);
+      if (m) rows.push({ name: m[1].trim(), cpu: Number(m[2]), mem: Number(m[3]) * 1024 });
+    }
+  }
+  const map = new Map();
+  for (const p of rows) {
+    const g = map.get(p.name) || { name: p.name, count: 0, cpuSec: 0, mem: 0 };
+    g.count++; g.cpuSec += p.cpu; g.mem += p.mem; if (!g.path && p.path) g.path = p.path; map.set(p.name, g);
+  }
+  const now = Date.now(), cores = os.cpus().length || 1, out = [];
+  for (const g of map.values()) {
+    let cpu = null;
+    if (prevProc && prevProc.map.has(g.name) && now > prevProc.t)
+      cpu = Math.max(0, g.cpuSec - prevProc.map.get(g.name)) / ((now - prevProc.t) / 1000) / cores * 100;
+    out.push({ name: g.name, count: g.count, cpu, mem: g.mem, protected: isProtected(g.name) });
+  }
+  prevProc = { t: now, map: new Map([...map].map(([k, v]) => [k, v.cpuSec])) };
+  await Promise.all(out.map(async p => { const g = map.get(p.name); p.icon = g && g.path ? await fileIcon(g.path) : ""; }));
+  return out;
+}
+async function killProc(name, force) {
+  name = String(name);
+  if (!/^[\w .+\-()]{1,80}$/.test(name)) throw new Error("unexpected program name");
+  if (isProtected(name)) throw new Error("that is a system program");
+  if (WIN) {
+    const r = await run("taskkill.exe", (force ? ["/F"] : []).concat(["/IM", name + ".exe"]));
+    return { ok: r.ok, msg: (r.out || r.err).trim().split(/\r?\n/)[0] || "" };
+  }
+  const r = await run("pkill", [force ? "-9" : "-15", "-x", name]);
+  return { ok: r.ok, msg: r.ok ? "signal sent" : "not found" };
+}
+
+// ---- Network ----
+function tcpTime(host, port = 443, timeout = 3000) {
+  return new Promise(resolve => {
+    const t = Date.now(), sock = netmod.connect({ host, port });
+    const done = ok => { sock.destroy(); resolve(ok ? Date.now() - t : null); };
+    sock.setTimeout(timeout, () => done(false));
+    sock.on("connect", () => done(true));
+    sock.on("error", () => done(false));
+  });
+}
+function publicIp() {
+  return new Promise(resolve => {
+    const req = https.get("https://api.ipify.org", { timeout: 4000 }, res => {
+      let d = ""; res.on("data", c => { d += c; });
+      res.on("end", () => resolve(/^[\da-f.:]{3,45}$/i.test(d.trim()) ? d.trim() : null));
+    });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
+  });
+}
+
+// ---- Network extras: live traffic, connection details, speed test, quick fixes, devices ----
+// Live traffic on Windows: one small helper reports the byte counters of the physical network
+// adapter once a second. (netstat was used before; with virtual adapters such as Hyper-V it counts
+// the same traffic several times and showed about four times the real speed.)
+let netPs = null, netCur = null, netPrev = null, netIdle = null;
+function netWatch() {
+  clearTimeout(netIdle);
+  netIdle = setTimeout(() => { if (netPs) { try { netPs.kill(); } catch (e) {} } }, 8000); // stops once the network tab is closed
+  if (netPs) return;
+  const ps = "$ErrorActionPreference='SilentlyContinue'; $i=0; while (Get-Process -Id " + process.pid + ") {" +
+    " if ($i % 30 -eq 0) { $n=@(Get-NetAdapter -Physical | Where-Object {$_.Status -eq 'Up'} | ForEach-Object {$_.Name}) }; $i++;" +
+    " [uint64]$rx=0; [uint64]$tx=0; if ($n.Count) { foreach ($s in @(Get-NetAdapterStatistics -Name $n)) { $rx+=$s.ReceivedBytes; $tx+=$s.SentBytes } };" +
+    " [Console]::Out.WriteLine(\"$rx $tx\"); Start-Sleep -Milliseconds 1000 }";
+  const p = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+  netPs = p; let buf = "";
+  p.stdout.on("data", d => {
+    buf += d; let k;
+    while ((k = buf.indexOf("\n")) >= 0) {
+      const m = /^(\d+) (\d+)/.exec(buf.slice(0, k).trim()); buf = buf.slice(k + 1);
+      if (m) { netPrev = netCur; netCur = { t: Date.now(), rx: Number(m[1]), tx: Number(m[2]) }; }
+    }
+  });
+  const gone = () => { if (netPs === p) { netPs = null; netCur = netPrev = null; } };
+  p.on("exit", gone); p.on("error", gone);
+}
+function netBytes() { // other systems: total bytes received / sent
+  try {
+    let rx = 0, tx = 0;
+    for (const line of fs.readFileSync("/proc/net/dev", "utf8").split("\n").slice(2)) { const p = line.trim().split(/[:\s]+/); if (p.length > 9 && p[0] !== "lo") { rx += Number(p[1]); tx += Number(p[9]); } }
+    return { rx, tx };
+  } catch (e) { return null; }
+}
+let lastNet = null;
+async function netRate() { // bytes per second
+  if (WIN) {
+    netWatch();
+    const a = netPrev, b = netCur;
+    if (!a || !b || Date.now() - b.t > 4000 || b.t <= a.t || b.rx < a.rx || b.tx < a.tx) return { down: null, up: null };
+    const s = (b.t - a.t) / 1000;
+    return { down: (b.rx - a.rx) / s, up: (b.tx - a.tx) / s };
+  }
+  const b = netBytes(), now = Date.now();
+  let out = { down: null, up: null };
+  if (b && lastNet && now > lastNet.t && now - lastNet.t < 15000 && b.rx >= lastNet.rx && b.tx >= lastNet.tx) {
+    const s = (now - lastNet.t) / 1000; out = { down: (b.rx - lastNet.rx) / s, up: (b.tx - lastNet.tx) / s };
+  }
+  if (b) lastNet = { t: now, rx: b.rx, tx: b.tx };
+  return out;
+}
+let lastGateway = "";
+async function netDetails() {
+  if (!WIN) return { adapters: [], msg: "only available on Windows" };
+  const ps = "$ErrorActionPreference='SilentlyContinue';" +
+    "$a=@(Get-NetAdapter -Physical | Where-Object {$_.Status -eq 'Up'} | Select-Object Name,InterfaceDescription,LinkSpeed,PhysicalMediaType,ifIndex);" +
+    "$c=@(Get-NetIPConfiguration | Where-Object {$_.IPv4DefaultGateway} | ForEach-Object {[pscustomobject]@{ifIndex=$_.InterfaceIndex;gateway=(@($_.IPv4DefaultGateway | ForEach-Object {$_.NextHop}) -join ', ');dns=(@($_.DNSServer | Where-Object {$_.AddressFamily -eq 2} | ForEach-Object {$_.ServerAddresses}) -join ', ')}});" +
+    "$w=(netsh wlan show interfaces | Out-String);" +
+    "[pscustomobject]@{adapters=$a;config=$c;wlan=$w} | ConvertTo-Json -Compress -Depth 4";
+  const r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], 20000);
+  let j; try { j = JSON.parse(r.out); } catch (e) { throw new Error("could not read the connection details"); }
+  const conf = [].concat(j.config || []), wlan = String(j.wlan || "");
+  const ssid = (/^\s*SSID\s*:\s*(.+?)\s*$/m.exec(wlan) || [])[1] || "", signal = (/^\s*Signal\s*:\s*(\d+)\s*%/m.exec(wlan) || [])[1];
+  const adapters = [].concat(j.adapters || []).filter(Boolean).map(a => {
+    const media = String(a.PhysicalMediaType || ""), wifi = /802\.11|wireless|wi-?fi/i.test(media + " " + a.Name);
+    const c = conf.find(x => x && x.ifIndex === a.ifIndex) || {};
+    return { name: String(a.Name || ""), device: String(a.InterfaceDescription || ""), kind: wifi ? "wi-fi" : /802\.3/.test(media) ? "cable (ethernet)" : (media || "unknown"),
+      speed: String(a.LinkSpeed || ""), gateway: String(c.gateway || ""), dns: String(c.dns || ""), ssid: wifi ? ssid : "", signal: wifi && signal != null ? Number(signal) : null };
+  });
+  lastGateway = adapters.map(a => a.gateway).filter(Boolean).join(", ");
+  return { adapters };
+}
+const SPEED_HOST = "https://speed.cloudflare.com";
+function speedDown(limitMs, bytes) {
+  return new Promise((resolve, reject) => {
+    let got = 0, t0 = 0, done = false, timer = null, req = null;
+    const finish = err => {
+      if (done) return; done = true; clearTimeout(timer); if (req) req.destroy();
+      const s = t0 ? (Date.now() - t0) / 1000 : 0;
+      if (got < 100000 || s <= 0) reject(new Error(err || "no data received")); else resolve({ bps: got * 8 / s, bytes: got });
+    };
+    req = https.get(SPEED_HOST + "/__down?bytes=" + bytes, { timeout: 8000 }, res => {
+      if (res.statusCode !== 200) { res.resume(); finish("the test server answered " + res.statusCode); return; }
+      res.on("data", c => { if (!t0) t0 = Date.now(); else got += c.length; });
+      res.on("end", () => finish()); res.on("error", e => finish(e.message));
+    });
+    req.on("error", e => finish(e.message)); req.on("timeout", () => finish("timed out"));
+    timer = setTimeout(() => finish(), limitMs);
+  });
+}
+function speedUp(limitMs, bytes) {
+  return new Promise(resolve => {
+    let done = false, t0 = 0, sent = 0, timer = null, base = 0;
+    const chunk = Buffer.alloc(65536, 97);
+    const req = https.request(SPEED_HOST + "/__up", { method: "POST", timeout: 8000, headers: { "Content-Type": "application/octet-stream", "Content-Length": bytes } }, res => { res.resume(); res.on("end", () => finish()); });
+    const finish = () => {
+      if (done) return; done = true; clearTimeout(timer);
+      const s = t0 ? (Date.now() - t0) / 1000 : 0, n = req.socket ? req.socket.bytesWritten - base : 0;
+      req.destroy(); resolve(n > 100000 && s > 0 ? { bps: n * 8 / s, bytes: n } : null);
+    };
+    const pump = () => {
+      while (!done && sent < bytes) { const n = Math.min(chunk.length, bytes - sent); sent += n; if (!req.write(n === chunk.length ? chunk : chunk.subarray(0, n))) { req.once("drain", pump); return; } }
+      if (!done) req.end();
+    };
+    req.on("socket", s => { const go = () => { if (t0) return; t0 = Date.now(); base = s.bytesWritten; pump(); }; if (s.connecting) s.once(s.encrypted ? "secureConnect" : "connect", go); else go(); });
+    req.on("error", () => finish()); req.on("timeout", () => finish());
+    timer = setTimeout(finish, limitMs + 4000);
+  });
+}
+let speedBusy = false;
+async function speedTest() {
+  if (speedBusy) throw new Error("a speed test is already running");
+  speedBusy = true;
+  try {
+    const down = await speedDown(8000, 50000000);
+    const up = await speedUp(6000, 20000000);
+    return { down: down.bps, up: up ? up.bps : null, bytes: down.bytes + (up ? up.bytes : 0) };
+  } finally { speedBusy = false; }
+}
+async function netFix(kind) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  if (kind === "flushdns") { const r = await run("ipconfig.exe", ["/flushdns"], 15000); return { ok: r.ok, msg: r.ok ? "" : (r.out || r.err).trim().slice(0, 200) }; }
+  if (kind === "renew") {
+    let r = await run("ipconfig.exe", ["/renew"], 60000);
+    if (r.ok) return { ok: true, msg: "" };
+    // Windows wants administrator rights for this: ask with its own permission prompt
+    r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "try { $p = Start-Process ipconfig.exe -ArgumentList '/renew' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { exit 1223 }"], 90000);
+    return { ok: r.ok, msg: r.ok ? "" : "not renewed - the windows permission was declined, or the adapter did not answer" };
+  }
+  return { ok: false, msg: "unknown request" };
+}
+function parseArp(text) {
+  const seen = new Map(), gw = lastGateway.split(", ");
+  for (const line of String(text).split(/\r?\n/)) {
+    const ip = /(\d{1,3}(?:\.\d{1,3}){3})/.exec(line), mac = /([0-9a-f]{2}(?:[-:][0-9a-f]{2}){5})/i.exec(line);
+    if (!ip || !mac) continue;
+    const m = mac[1].toLowerCase().replace(/-/g, ":"), first = Number(ip[1].split(".")[0]);
+    if (m === "ff:ff:ff:ff:ff:ff" || m === "00:00:00:00:00:00" || m.startsWith("01:00:5e") || first >= 224 || /\.255$/.test(ip[1])) continue;
+    if (!seen.has(ip[1])) seen.set(ip[1], { ip: ip[1], mac: m, name: "", note: gw.includes(ip[1]) ? "router" : "" });
+  }
+  return [...seen.values()].slice(0, 300);
+}
+const ip4num = ip => ip.split(".").reduce((a, b) => a * 256 + Number(b), 0) >>> 0;
+const numip4 = n => [n >>> 24, n >>> 16 & 255, n >>> 8 & 255, n & 255].join(".");
+function localNets() { // home-size networks this PC is on (254 addresses at most); prefers the one with the router
+  const nets = [], ifs = os.networkInterfaces(), gw = lastGateway.split(", ").filter(Boolean);
+  for (const name in ifs) for (const a of ifs[name]) {
+    if (a.family !== "IPv4" || a.internal) continue;
+    const mask = ip4num(a.netmask), ip = ip4num(a.address);
+    if (mask < 0xFFFFFF00 || mask === 0xFFFFFFFF) continue;
+    nets.push({ name, ip, mask, base: (ip & mask) >>> 0, address: a.address, mac: a.mac });
+  }
+  const withRouter = nets.filter(n => gw.some(g => ((ip4num(g) & n.mask) >>> 0) === n.base));
+  return withRouter.length ? withRouter : nets;
+}
+function wakeNeighbours(nets) {
+  return new Promise(resolve => {
+    const socks = [];
+    for (const n of nets) {
+      const size = (~n.mask) >>> 0;
+      for (let i = 1; i < size; i++) {
+        const t = (n.base + i) >>> 0; if (t === n.ip) continue;
+        try { const s = netmod.connect({ host: numip4(t), port: 80 }); s.on("error", () => {}); socks.push(s); } catch (e) {}
+      }
+    }
+    setTimeout(() => { for (const s of socks) s.destroy(); resolve(); }, 2500);
+  });
+}
+async function netDevices() {
+  // 1. knock on every address of the home network, so Windows looks each device up
+  // 2. read the list of devices Windows now knows
+  const nets = localNets();
+  if (nets.length) await wakeNeighbours(nets);
+  const r = await run(WIN ? "arp.exe" : "arp", ["-a"], 8000);
+  if (!r.out.trim() && !nets.length) throw new Error("could not read the device list");
+  let list = parseArp(r.out);
+  if (nets.length) list = list.filter(d => nets.some(n => ((ip4num(d.ip) & n.mask) >>> 0) === n.base));
+  await Promise.all(list.map(async d => {
+    try { const n = await Promise.race([dns.promises.reverse(d.ip), new Promise(res => setTimeout(() => res(null), 1500))]); if (n && n[0]) d.name = String(n[0]); } catch (e) {}
+  }));
+  for (const n of nets) if (!list.some(d => d.ip === n.address)) list.push({ ip: n.address, mac: String(n.mac || "").toLowerCase(), name: os.hostname(), note: "this pc" });
+  return list.sort((a, b) => ip4num(a.ip) - ip4num(b.ip));
+}
+
+// ---- Clipboard history (memory only, never written to disk) ----
+let clips = [], lastClip = null;
+function pollClipboard() {
+  let t = ""; try { t = clipboard.readText(); } catch (e) { return; }
+  if (lastClip === null) { lastClip = t; return; } // ignore what was already there at launch
+  if (!t || t === lastClip) return;
+  lastClip = t;
+  clips = clips.filter(c => c.text !== t);
+  clips.unshift({ text: t.slice(0, 20000), time: new Date().toTimeString().slice(0, 8) });
+  if (clips.length > 25) clips.length = 25;
+}
+
+// ---- Screenshot ----
+const shotsDir = () => path.join(app.getPath("pictures"), "Nightdeck Screenshots");
+async function screenshot(hide) {
+  const d = screen.getPrimaryDisplay();
+  const size = { width: Math.round(d.size.width * d.scaleFactor), height: Math.round(d.size.height * d.scaleFactor) };
+  const conWasVisible = con && !con.isDestroyed() && con.isVisible();
+  if (hide) { if (conWasVisible) con.hide(); main.hide(); await new Promise(r => setTimeout(r, 400)); }
+  try {
+    const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: size });
+    const src = sources.find(x => String(x.display_id) === String(d.id)) || sources[0];
+    if (!src || src.thumbnail.isEmpty()) throw new Error("the screen could not be captured");
+    fs.mkdirSync(shotsDir(), { recursive: true });
+    const n = new Date(), pad = x => String(x).padStart(2, "0");
+    const file = path.join(shotsDir(), "shot-" + n.getFullYear() + pad(n.getMonth() + 1) + pad(n.getDate()) + "-" +
+      pad(n.getHours()) + pad(n.getMinutes()) + pad(n.getSeconds()) + ".png");
+    fs.writeFileSync(file, src.thumbnail.toPNG());
+    const sz = src.thumbnail.getSize();
+    return { file, width: sz.width, height: sz.height };
+  } finally {
+    if (hide && main && !main.isDestroyed()) { main.show(); if (conWasVisible && con && !con.isDestroyed()) { sync(); con.showInactive(); } }
+  }
+}
+
+// ---- Temperatures (best effort: Windows only exposes these on some PCs) ----
+let tempCache = { t: 0, val: { system: null, gpu: null, gpuName: "" } }, tempBusy = false;
+async function readTemps() {
+  if (tempBusy || Date.now() - tempCache.t < 4000) return tempCache.val;
+  tempBusy = true;
+  const val = { system: null, gpu: null, gpuName: "" };
+  try {
+    const sane = c => isFinite(c) && c > 0 && c < 125;
+    // nvidia-smi ships with the NVIDIA driver; look in the usual places, not just the PATH
+    const smiPaths = ["nvidia-smi"];
+    if (WIN) {
+      const root = process.env.SystemRoot || "C:\\Windows", pf = process.env.ProgramFiles || "C:\\Program Files";
+      smiPaths.push(path.join(root, "System32", "nvidia-smi.exe"), path.join(root, "Sysnative", "nvidia-smi.exe"),
+        path.join(pf, "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe"));
+      // newer drivers keep it only inside the Windows driver store
+      try {
+        const repo = path.join(root, "System32", "DriverStore", "FileRepository");
+        for (const d of fs.readdirSync(repo)) {
+          if (!/^nv/i.test(d)) continue;
+          const exe = path.join(repo, d, "nvidia-smi.exe");
+          if (fs.existsSync(exe)) smiPaths.push(exe);
+        }
+      } catch (e) {}
+    }
+    const smi = (async () => {
+      let last = { ok: false, out: "", err: "nvidia-smi not found" };
+      for (const exe of smiPaths) {
+        last = await run(exe, ["--query-gpu=temperature.gpu,name", "--format=csv,noheader,nounits"], 10000);
+        if (last.ok) break;
+      }
+      return last;
+    })();
+    const jobs = [smi];
+    if (WIN) jobs.push(run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "Get-CimInstance Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction SilentlyContinue | " +
+      "Select-Object Name,HighPrecisionTemperature,Temperature | ConvertTo-Json -Compress"], 15000));
+    const [gpu, zone] = await Promise.all(jobs);
+    if (gpu.ok) {
+      // the reading can be whole ("49") or decimal ("49.47" / "49,47")
+      const m = /^\s*(\d+(?:[.,]\d+)?)\s*,\s*(\D.*)$/m.exec(gpu.out);
+      const deg = m ? Number(m[1].replace(",", ".")) : NaN;
+      if (m && sane(deg)) { val.gpu = deg; val.gpuName = m[2].trim(); }
+      else val.gpuError = "unexpected reply: " + gpu.out.trim().slice(0, 80);
+    } else val.gpuError = (gpu.err || "nvidia-smi failed").trim().split(/\r?\n/)[0].slice(0, 120);
+    if (zone && zone.out.trim()) {
+      let d = JSON.parse(zone.out); if (!Array.isArray(d)) d = [d];
+      const temps = d.map(z => z.HighPrecisionTemperature ? z.HighPrecisionTemperature / 10 - 273.15 : Number(z.Temperature) - 273.15).filter(sane);
+      if (temps.length) val.system = Math.max(...temps);
+    }
+    if (!WIN) { // Linux, used for testing
+      try {
+        const dir = "/sys/class/thermal";
+        const temps = fs.readdirSync(dir).filter(n => n.startsWith("thermal_zone"))
+          .map(n => Number(fs.readFileSync(path.join(dir, n, "temp"), "utf8")) / 1000).filter(sane);
+        if (temps.length) val.system = Math.max(...temps);
+      } catch (e) {}
+    }
+  } catch (e) {}
+  tempCache = { t: Date.now(), val }; tempBusy = false;
+  return val;
+}
+
+// ---- Currency rates (fetched on demand, kept for 6 hours) ----
+function getJson(url) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: 7000, headers: { "User-Agent": "Nightdeck-Utility" } }, res => {
+      if (res.statusCode !== 200) { res.resume(); reject(new Error("HTTP " + res.statusCode)); return; }
+      let d = ""; res.setEncoding("utf8");
+      res.on("data", c => { d += c; if (d.length > 2000000) req.destroy(new Error("reply too large")); });
+      res.on("end", () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+  });
+}
+let rateCache = null;
+async function currencyRates() {
+  if (rateCache && Date.now() - rateCache.t < 6 * 3600 * 1000) return rateCache.val;
+  const clean = r => { const o = {}; for (const k in r) if (/^[A-Z]{3}$/.test(k) && isFinite(r[k]) && r[k] > 0) o[k] = Number(r[k]); return o; };
+  let val = null;
+  try {
+    const j = await getJson("https://open.er-api.com/v6/latest/EUR");
+    if (j && j.result === "success" && j.rates) val = { rates: clean(j.rates), updated: String(j.time_last_update_utc || "").replace(/ \d\d:\d\d:\d\d.*$/, ""), source: "open.er-api.com" };
+  } catch (e) {}
+  if (!val) {
+    const j = await getJson("https://api.frankfurter.dev/v1/latest?from=EUR");
+    if (j && j.rates) val = { rates: Object.assign({ EUR: 1 }, clean(j.rates)), updated: String(j.date || ""), source: "frankfurter.dev" };
+  }
+  if (!val || !Object.keys(val.rates).length) throw new Error("rates not available");
+  rateCache = { t: Date.now(), val };
+  return val;
+}
+
+// ---- Windows controls: volume, brightness, Windows switches, cleanup ----
+function ps(script, timeout = 20000) {
+  const enc = Buffer.from("$ProgressPreference='SilentlyContinue';" + script, "utf16le").toString("base64");
+  return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc], timeout);
+}
+const AUDIO_CS = `Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume {
+  int f(); int g(); int h(); int i();
+  int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);
+  int j();
+  int GetMasterVolumeLevelScalar(out float pfLevel);
+  int k(); int l(); int m(); int n();
+  int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, System.Guid pguidEventContext);
+  int GetMute(out bool pbMute);
+}
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice { int Activate(ref System.Guid id, int clsCtx, int activationParams, out IAudioEndpointVolume aev); }
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator { int f(); int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint); }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
+public class NdAudio {
+  static IAudioEndpointVolume Vol() {
+    var en = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
+    IMMDevice dev = null; Marshal.ThrowExceptionForHR(en.GetDefaultAudioEndpoint(0, 1, out dev));
+    IAudioEndpointVolume epv = null; var id = typeof(IAudioEndpointVolume).GUID;
+    Marshal.ThrowExceptionForHR(dev.Activate(ref id, 23, 0, out epv)); return epv;
+  }
+  public static float Volume {
+    get { float v = -1; Marshal.ThrowExceptionForHR(Vol().GetMasterVolumeLevelScalar(out v)); return v; }
+    set { Marshal.ThrowExceptionForHR(Vol().SetMasterVolumeLevelScalar(value, System.Guid.Empty)); } }
+  public static bool Mute {
+    get { bool m; Marshal.ThrowExceptionForHR(Vol().GetMute(out m)); return m; }
+    set { Marshal.ThrowExceptionForHR(Vol().SetMute(value, System.Guid.Empty)); } }
+}
+'@
+`;
+const MON_CS = `Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public class NdMon {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct PM { public IntPtr h; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string d; }
+  [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+  [DllImport("user32.dll")] static extern IntPtr GetDesktopWindow();
+  [DllImport("dxva2.dll")] static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr hMon, out uint n);
+  [DllImport("dxva2.dll")] static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr hMon, uint n, [Out] PM[] arr);
+  [DllImport("dxva2.dll")] static extern bool GetMonitorBrightness(IntPtr h, out uint min, out uint cur, out uint max);
+  [DllImport("dxva2.dll")] static extern bool SetMonitorBrightness(IntPtr h, uint v);
+  [DllImport("dxva2.dll")] static extern bool DestroyPhysicalMonitors(uint n, PM[] arr);
+  public static int Run(int set) {
+    IntPtr hm = MonitorFromWindow(GetDesktopWindow(), 1); uint n;
+    if (!GetNumberOfPhysicalMonitorsFromHMONITOR(hm, out n) || n == 0) return -1;
+    var arr = new PM[n]; if (!GetPhysicalMonitorsFromHMONITOR(hm, n, arr)) return -1;
+    int res = -1;
+    try {
+      uint mn, cur, mx;
+      if (GetMonitorBrightness(arr[0].h, out mn, out cur, out mx) && mx > mn) {
+        if (set >= 0) { uint v = (uint)(mn + (mx - mn) * set / 100); if (SetMonitorBrightness(arr[0].h, v)) res = set; }
+        else res = (int)((cur - mn) * 100 / (mx - mn));
+      }
+    } finally { DestroyPhysicalMonitors(n, arr); }
+    return res;
+  }
+}
+'@
+`;
+const pct = v => Math.max(0, Math.min(100, Math.round(Number(v))));
+async function volume(set, mute) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  let s = AUDIO_CS;
+  if (set != null && isFinite(set)) s += "[NdAudio]::Volume = " + (pct(set) / 100).toFixed(2) + ";";
+  if (mute === true || mute === false) s += "[NdAudio]::Mute = $" + mute + ";";
+  s += "[string][math]::Round([NdAudio]::Volume * 100) + ';' + [NdAudio]::Mute";
+  const r = await ps(s), m = /(\d+);(True|False)/i.exec(r.out);
+  return m ? { ok: true, level: Number(m[1]), mute: /true/i.test(m[2]) } : { ok: false, msg: "the sound device could not be read" };
+}
+async function brightness(set) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const v = set != null && isFinite(set) ? pct(set) : -1;
+  const s = "$set = " + v + ";" +
+    "$b = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue | Select-Object -First 1;" +
+    "if ($b) { if ($set -ge 0) { Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{Timeout=[uint32]1;Brightness=[byte]$set} | Out-Null; 'nd:' + $set } else { 'nd:' + $b.CurrentBrightness } }" +
+    " else {\n" + MON_CS + "\n'nd:' + [NdMon]::Run($set) }";
+  const r = await ps(s), m = /nd:(-?\d+)/.exec(r.out);
+  return m && Number(m[1]) >= 0 ? { ok: true, level: Number(m[1]) } : { ok: false, msg: "this screen does not allow brightness control from Windows" };
+}
+const HKCU = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\";
+const SWITCHES = {
+  appsDark: { key: HKCU + "Themes\\Personalize", name: "AppsUseLightTheme", on: 0, off: 1 },
+  sysDark: { key: HKCU + "Themes\\Personalize", name: "SystemUsesLightTheme", on: 0, off: 1 },
+  showExt: { key: HKCU + "Explorer\\Advanced", name: "HideFileExt", on: 0, off: 1 },
+  showHidden: { key: HKCU + "Explorer\\Advanced", name: "Hidden", on: 1, off: 2 }
+};
+async function switchesGet() {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const out = { ok: true };
+  for (const id in SWITCHES) {
+    const sw = SWITCHES[id], r = await run("reg.exe", ["query", sw.key, "/v", sw.name]);
+    const m = /REG_DWORD\s+0x([0-9a-f]+)/i.exec(r.out);
+    out[id] = m ? parseInt(m[1], 16) === sw.on : false;
+  }
+  return out;
+}
+async function switchSet(id, on) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const sw = SWITCHES[id]; if (!sw) return { ok: false, msg: "unknown switch" };
+  const r = await run("reg.exe", ["add", sw.key, "/v", sw.name, "/t", "REG_DWORD", "/d", String(on ? sw.on : sw.off), "/f"]);
+  return { ok: r.ok, msg: r.ok ? "" : r.err.trim().split(/\r?\n/)[0] };
+}
+// size of a folder tree, without following links; gives up after a time/entry budget
+async function treeSize(start, budget) {
+  let bytes = 0, count = 0; const stack = [start];
+  while (stack.length && count < budget.max && Date.now() < budget.until) {
+    const dir = stack.pop(); let items;
+    try { items = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { continue; }
+    for (const it of items) {
+      const p = path.join(dir, it.name); count++;
+      if (it.isSymbolicLink()) continue;
+      if (it.isDirectory()) stack.push(p);
+      else { try { bytes += (await fs.promises.lstat(p)).size; } catch (e) {} }
+    }
+  }
+  return { bytes, count };
+}
+function tempDir() {
+  const t = path.resolve(os.tmpdir());
+  if (t === path.parse(t).root || t.length < 8 || !/te?mp/i.test(t) || t === path.resolve(os.homedir())) throw new Error("temp folder looks unusual - not touching it");
+  return t;
+}
+async function cleanScan() {
+  const temp = await treeSize(tempDir(), { max: 150000, until: Date.now() + 10000 });
+  let bin = null;
+  if (WIN) {
+    const r = await ps("$s=(New-Object -ComObject Shell.Application).NameSpace(10);$n=0;$z=0;foreach($i in $s.Items()){$n++;$z+=[double]$i.ExtendedProperty('Size')};'nd:'+$n+';'+$z", 25000);
+    const m = /nd:(\d+);([\d.eE+,]+)/.exec(r.out);
+    if (m) bin = { count: Number(m[1]), bytes: Number(m[2].replace(",", ".")) || 0 };
+  }
+  return { temp, tempPath: tempDir(), bin };
+}
+async function cleanTemp() {
+  const dir = tempDir(), cutoff = Date.now() - 24 * 3600 * 1000;
+  let removed = 0, freed = 0, kept = 0, items;
+  try { items = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { throw new Error("temp folder could not be read"); }
+  const until = Date.now() + 60000;
+  for (const it of items) {
+    if (Date.now() > until) { kept++; continue; }
+    const p = path.join(dir, it.name);
+    try {
+      const st = await fs.promises.lstat(p);
+      if (st.mtimeMs > cutoff) { kept++; continue; }          // used in the last day: leave it
+      const sz = it.isDirectory() && !it.isSymbolicLink() ? (await treeSize(p, { max: 50000, until: Date.now() + 3000 })).bytes : st.size;
+      await fs.promises.rm(p, { recursive: true, force: true, maxRetries: 0 });
+      removed++; freed += sz;
+    } catch (e) { kept++; }                                    // in use by a running program: leave it
+  }
+  return { removed, freed, kept };
+}
+async function cleanBin() {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const r = await ps("Clear-RecycleBin -Force -ErrorAction SilentlyContinue; 'nd:done'", 60000);
+  return { ok: /nd:done/.test(r.out), msg: r.err.trim().split(/\r?\n/)[0] || "" };
+}
+
+// ---- App behaviour: tray icon, global hotkey, start with Windows ----
+const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
+let settings = { tray: false, hotkey: false, accel: "Control+Alt+N" };
+function loadSettings() { try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsFile(), "utf8"))); } catch (e) {} }
+function saveSettings() { try { fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch (e) {} }
+let tray = null, hotkeyOk = false, quitting = false, conWanted = true;
+function hideAll() { if (con && !con.isDestroyed()) con.hide(); if (main && !main.isDestroyed()) main.hide(); }
+function showAll() {
+  if (!main || main.isDestroyed()) return;
+  main.show(); if (main.isMinimized()) main.restore();
+  if (conWanted && con && !con.isDestroyed()) { sync(); con.showInactive(); }
+  main.focus();
+}
+function toggleAll() { if (main && !main.isDestroyed() && main.isVisible() && !main.isMinimized() && main.isFocused()) hideAll(); else showAll(); }
+function applyTray() {
+  if (settings.tray && !tray) {
+    try {
+      tray = new Tray(ICON); tray.setToolTip("Nightdeck Utility");
+      tray.setContextMenu(Menu.buildFromTemplate([
+        { label: "Show Nightdeck", click: showAll }, { label: "Hide", click: hideAll }, { type: "separator" },
+        { label: "Quit", click: () => { quitting = true; app.quit(); } }]));
+      tray.on("click", () => { if (main && !main.isDestroyed() && main.isVisible()) hideAll(); else showAll(); });
+    } catch (e) { tray = null; }
+  } else if (!settings.tray && tray) { tray.destroy(); tray = null; }
+}
+const ACCEL = /^((Control|Ctrl|Alt|Shift|Super)\+){1,3}([A-Z0-9]|F([1-9]|1[0-2])|Space)$/i;
+function applyHotkey() {
+  globalShortcut.unregisterAll(); hotkeyOk = false;
+  if (settings.hotkey && ACCEL.test(settings.accel)) { try { hotkeyOk = globalShortcut.register(settings.accel, toggleAll); } catch (e) { hotkeyOk = false; } }
+}
+const LOGIN_ARGS = ["--startup"];
+function settingsGet() {
+  let login = false; try { login = app.getLoginItemSettings({ args: LOGIN_ARGS }).openAtLogin; } catch (e) {}
+  return { tray: settings.tray, trayOk: !settings.tray || !!tray, hotkey: settings.hotkey, hotkeyOk, accel: settings.accel, login };
+}
+function settingSet(key, value) {
+  if (key === "tray") { settings.tray = !!value; applyTray(); }
+  else if (key === "hotkey") { settings.hotkey = !!value; applyHotkey(); }
+  else if (key === "accel") { value = String(value).trim(); if (!ACCEL.test(value)) throw new Error("use a combination like Control+Alt+N"); settings.accel = value; applyHotkey(); }
+  else if (key === "login") { app.setLoginItemSettings({ openAtLogin: !!value, args: LOGIN_ARGS }); }
+  else throw new Error("unknown setting");
+  saveSettings();
+  return settingsGet();
+}
+
+// ---- Everything the tool tabs can ask the app to do ----
+const API = {
+  sys() {
+    const cpus = os.cpus();
+    let disk = null;
+    try {
+      const root = path.parse(os.homedir()).root, st = fs.statfsSync(root);
+      disk = { root, total: st.blocks * st.bsize, free: st.bavail * st.bsize };
+    } catch (e) {}
+    return {
+      cpu: cpuPercent(), memTotal: os.totalmem(), memFree: os.freemem(), uptime: os.uptime(), disk,
+      host: os.hostname(), cpuModel: cpus[0] ? cpus[0].model.trim() : "unknown", cores: cpus.length,
+      system: (os.version ? os.version() : os.type()) + " (" + os.arch() + ")"
+    };
+  },
+  temps: readTemps,
+  rates: currencyRates,
+  volume, brightness, switchesGet, switchSet, cleanScan, cleanTemp, cleanBin, settingsGet, settingSet,
+  procs: listProcs,
+  kill: killProc,
+  net() {
+    const adapters = [], ifs = os.networkInterfaces();
+    for (const name in ifs) for (const a of ifs[name]) if (a.family === "IPv4" && !a.internal) adapters.push({ name, address: a.address });
+    return { host: os.hostname(), adapters };
+  },
+  async netcheck() {
+    const [a, b, ip] = await Promise.all([tcpTime("1.1.1.1"), tcpTime("8.8.8.8"), publicIp()]);
+    return { a, b, publicIp: ip };
+  },
+  ping: () => tcpTime("1.1.1.1"),
+  netRate, netDetails, speedTest, netFix, netDevices,
+  async pick(kind) {
+    const r = await dialog.showOpenDialog(main, { properties: [kind === "folder" ? "openDirectory" : "openFile"] });
+    return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+  },
+  async launch(target) {
+    target = String(target);
+    if (/^https?:\/\//i.test(target)) { await shell.openExternal(target); return true; }
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(target)) throw new Error("only http and https links are allowed");
+    const err = await shell.openPath(target);
+    if (err) throw new Error(err);
+    return true;
+  },
+  async power(action) {
+    if (!WIN) return { ok: false, msg: "only available on Windows" };
+    const cmds = {
+      lock: ["rundll32.exe", ["user32.dll,LockWorkStation"]],
+      sleep: ["rundll32.exe", ["powrprof.dll,SetSuspendState", "0,1,0"]],
+      restart: ["shutdown.exe", ["/r", "/t", "0"]],
+      shutdown: ["shutdown.exe", ["/s", "/t", "0"]]
+    };
+    const c = cmds[action];
+    if (!c) return { ok: false, msg: "unknown action" };
+    if (action === "sleep") {
+      // The PC sleeps while this command runs. Waiting for it ended in a false "command failed" after waking up, so it is started without waiting.
+      execFile(c[0], c[1], { windowsHide: true }, () => {});
+      return { ok: true, msg: "" };
+    }
+    const r = await run(c[0], c[1], 15000);
+    return { ok: r.ok, msg: r.ok ? "" : (r.err || "command failed").trim().split(/\r?\n/)[0] };
+  },
+  clips: () => clips,
+  clipCopy(i) { const c = clips[i]; if (!c) return false; lastClip = c.text; clipboard.writeText(c.text); clips.splice(i, 1); clips.unshift(c); return true; },
+  // Clears this app's list, the current clipboard, and the Windows clipboard history (Win + V).
+  async clipClear() {
+    clips = [];
+    try { clipboard.clear(); lastClip = ""; } catch (e) {}
+    if (!WIN) return { windows: false };
+    const r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "[Windows.ApplicationModel.DataTransfer.Clipboard,Windows.ApplicationModel.DataTransfer,ContentType=WindowsRuntime] | Out-Null; " +
+      "[Windows.ApplicationModel.DataTransfer.Clipboard]::ClearHistory()"], 15000);
+    return { windows: r.ok && /true/i.test(r.out) };
+  },
+  copyText(t) { t = String(t); lastClip = t; clipboard.writeText(t); return true; },
+  timerDone(label) {
+    try { shell.beep(); } catch (e) {}
+    if (main && !main.isDestroyed()) { main.flashFrame(true); setTimeout(() => { if (main && !main.isDestroyed()) main.flashFrame(false); }, 4000); }
+    try { if (Notification.isSupported()) new Notification({ title: "Nightdeck", body: String(label || "Timer finished") }).show(); } catch (e) {}
+    return true;
+  },
+  screenshot: hide => screenshot(!!hide),
+  async openShots() { fs.mkdirSync(shotsDir(), { recursive: true }); const err = await shell.openPath(shotsDir()); if (err) throw new Error(err); return true; }
+};
+ipcMain.handle("nd-api", async (event, name, ...args) => {
+  if (!Object.prototype.hasOwnProperty.call(API, name)) throw new Error("unknown request");
+  return API[name](...args);
+});
+
+ipcMain.on("nd-log-clear", () => { history = []; });
+
+ipcMain.on("nd-log", (event, msg) => {
+  pushLog(String(msg));
+});
+
+// Software rendering avoids leftover "ghost" pixels while resizing.
+app.disableHardwareAcceleration();
+app.setAppUserModelId("Nightdeck.Utility");
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on("second-instance", showAll);
+app.on("before-quit", () => { quitting = true; });
+app.on("will-quit", () => { try { globalShortcut.unregisterAll(); } catch (e) {} try { if (netPs) netPs.kill(); } catch (e) {} });
+app.whenReady().then(() => { loadSettings(); createWindows(); applyTray(); applyHotkey(); setInterval(pollClipboard, 1000); });
+app.on("window-all-closed", () => app.quit());

@@ -1,0 +1,61 @@
+/* Nightdeck panel kit - styles. Change the variables below to re-theme. */
+.nd-root{
+  --nd-bg:#0c0f12; --nd-panel:#15191d; --nd-panel-2:#1b2025; --nd-line:#2a3138;
+  --nd-text:#d7dde2; --nd-dim:#7d8891; --nd-accent:#4fc3d9; --nd-on:#9bd64a;
+  display:flex; gap:22px; flex-wrap:wrap; justify-content:center; width:100%; max-width:1000px;
+  color:var(--nd-text); font-family:"Barlow",system-ui,sans-serif;
+}
+.nd-root *{box-sizing:border-box}
+.nd-win{background:var(--nd-panel); border:1px solid #000; outline:1px solid var(--nd-line); outline-offset:-2px;
+  box-shadow:0 20px 60px rgba(0,0,0,.55); position:relative}
+.nd-win::before,.nd-win::after{content:""; position:absolute; left:10px; right:10px; height:2px;
+  background:linear-gradient(90deg,#b05cd6,var(--nd-accent) 45%,var(--nd-on))}
+.nd-win::before{top:8px} .nd-win::after{bottom:8px; opacity:.55}
+.nd-menu{flex:1 1 560px; min-width:320px; display:flex; flex-direction:column}
+.nd-console{flex:0 1 300px; min-width:260px; display:flex; flex-direction:column; height:440px}
+.nd-body{display:flex; padding:26px 20px 12px; gap:22px; flex:1}
+.nd-side{width:190px; flex:none}
+.nd-title,.nd-ctitle{font-family:"Barlow Condensed","Arial Narrow",sans-serif; font-weight:300; letter-spacing:.06em;
+  margin:0 0 26px; font-size:38px; line-height:1; text-transform:uppercase; white-space:nowrap}
+.nd-ctitle{font-size:28px; margin:0 0 14px}
+.nd-tabs{display:flex; flex-direction:column; gap:10px}
+.nd-tab{font:400 20px "Barlow",system-ui,sans-serif; color:var(--nd-text); background:none; border:1px solid transparent;
+  padding:6px 8px; cursor:pointer; text-align:center; text-transform:lowercase; transition:.15s}
+.nd-tab:hover{color:#fff}
+.nd-tab[aria-selected="true"]{background:var(--nd-panel-2); border-color:var(--nd-line); color:#fff; box-shadow:inset 2px 0 0 var(--nd-accent)}
+.nd-tab:focus-visible,.nd-btn:focus-visible,.nd-opt input:focus-visible+span{outline:1px solid var(--nd-accent); outline-offset:2px}
+.nd-panes{flex:1; display:flex}
+.nd-pane{flex:1; display:none; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:9px 18px; align-content:start; padding-top:42px; min-height:300px}
+.nd-pane.nd-show{display:grid}
+.nd-opt{display:flex; align-items:center; gap:10px; font:500 12px "IBM Plex Mono",ui-monospace,monospace; color:var(--nd-dim); cursor:pointer; user-select:none}
+.nd-opt input{position:absolute; opacity:0}
+.nd-opt span{width:9px; height:9px; background:#3a434b; border:1px solid #000; flex:none; transition:.12s}
+.nd-opt input:checked+span{background:var(--nd-on); box-shadow:0 0 8px var(--nd-on)}
+.nd-opt:has(input:checked){color:var(--nd-text)}
+.nd-slider{display:flex; flex-direction:column; gap:5px; font:500 12px "IBM Plex Mono",ui-monospace,monospace; color:var(--nd-dim)}
+.nd-slider div{display:flex; justify-content:space-between}
+.nd-slider input{-webkit-appearance:none; appearance:none; width:100%; height:8px; background:#2b333a; border:1px solid #000; margin:0;
+  background-image:linear-gradient(var(--nd-accent),var(--nd-accent)); background-repeat:no-repeat; background-size:var(--p,50%) 100%}
+.nd-slider input::-webkit-slider-thumb{-webkit-appearance:none; width:4px; height:14px; background:#fff; cursor:ew-resize}
+.nd-slider input::-moz-range-thumb{width:4px; height:14px; background:#fff; border:0; border-radius:0; cursor:ew-resize}
+.nd-foot{display:flex; gap:6px; padding:10px 12px 18px; border-top:1px solid var(--nd-line); margin:0 10px; align-items:center; flex-wrap:wrap}
+.nd-btn{font:500 12px "IBM Plex Mono",ui-monospace,monospace; color:var(--nd-text); background:linear-gradient(#333b43,#232a30); border:1px solid #000; padding:5px 18px; cursor:pointer}
+.nd-btn:hover{background:linear-gradient(#3d4750,#2a3239)} .nd-btn:active{transform:translateY(1px)}
+.nd-foot small{margin-left:auto; font:400 11px "IBM Plex Mono",ui-monospace,monospace; color:var(--nd-dim)}
+.nd-inner{padding:26px 18px 20px; display:flex; flex-direction:column; flex:1; min-height:0}
+.nd-log{flex:1; overflow:auto; font:400 11px/1.55 "IBM Plex Mono",ui-monospace,monospace; color:#c9d1d7; white-space:pre-wrap; scrollbar-width:thin; scrollbar-color:#39424a transparent}
+.nd-log i{color:var(--nd-dim); font-style:normal}
+/* page background used by the demos */
+body.nd-page{margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;
+  background:radial-gradient(900px 500px at 20% 0%,#1a2530 0%,transparent 60%),radial-gradient(700px 500px at 100% 100%,#1d1a2a 0%,transparent 60%),#0c0f12}
+@media (prefers-reduced-motion:reduce){.nd-root *{transition:none!important}}
+
+/* read-only meters and info rows */
+.nd-meter{display:flex; flex-direction:column; gap:5px; font:500 12px "IBM Plex Mono",ui-monospace,monospace; color:var(--nd-text)}
+.nd-meter>div:first-child{display:flex; justify-content:space-between}
+.nd-meter output{color:var(--nd-dim)}
+.nd-meterbar{height:8px; background:#2b333a; border:1px solid #000}
+.nd-meterbar i{display:block; height:100%; width:0; background:var(--nd-accent); transition:width .5s}
+.nd-meterbar i.nd-hot{background:#d6564a}
+.nd-info{display:flex; justify-content:space-between; gap:12px; font:500 12px "IBM Plex Mono",ui-monospace,monospace; color:var(--nd-dim); grid-column:1/-1}
+.nd-info output{color:var(--nd-text); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nightdeck Utility</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;500&family=IBM+Plex+Mono:wght@400;500&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="nightdeck.css">
+<link rel="stylesheet" href="tools.css">
+<style id="nd-fill">
+/* Fill the whole window */
+html,body{height:100%}
+body.nd-page{padding:0;display:block;background:#15191d;overflow:hidden}
+.nd-root{max-width:none;position:fixed;inset:0;height:auto;gap:0;flex-wrap:nowrap;align-items:stretch;background:#15191d}
+.nd-win{box-shadow:none;outline:0;border:0}
+.nd-menu{flex:1 1 auto;min-width:0}
+.nd-body{min-height:0}
+.nd-panes{min-height:0}
+.nd-pane{min-height:0;overflow:auto;padding-left:12px;padding-right:12px;padding-bottom:12px}
+.nd-console{flex:0 0 320px;height:auto;border-left:1px solid #2a3138}
+@media (max-width:760px){.nd-console{display:none}}
+</style>
+<style id="nd-bar-css">
+/* No title bar: invisible drag strip on top, window buttons sit inside the panel */
+.nd-bar{position:fixed;top:0;left:0;right:0;height:24px;z-index:5;-webkit-app-region:drag}
+.nd-bar span{display:none}
+.nd-title,.nd-ctitle{-webkit-app-region:drag;user-select:none}
+.nd-wc{position:absolute;top:18px;right:12px;z-index:6;display:flex;gap:4px;-webkit-app-region:no-drag}
+.nd-wc button{width:22px;height:18px;border:1px solid #000;background:linear-gradient(#333b43,#232a30);color:#d7dde2;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.nd-wc button:hover{background:linear-gradient(#3d4750,#2a3239)}
+.nd-wc button[data-w="close"]:hover{background:#c8323c;color:#fff}
+.nd-wc button:focus-visible{outline:1px solid #4fc3d9;outline-offset:1px}
+.nd-wc svg{width:8px;height:8px;stroke:currentColor;fill:none;stroke-width:1.3}
+</style>
+<style id="nd-drag-all">
+/* Drag the window from any empty area; controls stay clickable */
+body.nd-page{-webkit-app-region:drag;user-select:none}
+.nd-tab,.nd-opt,.nd-slider,.nd-btn,.nd-log,.nd-wc,.nd-wc button{-webkit-app-region:no-drag}
+.nd-log{user-select:text}
+</style>
+<style id="nd-hoverblue">
+/* Hover: checkboxes turn blue, sliders get the same blue glow */
+.nd-opt:hover input:checked+span{background:#4fc3d9;box-shadow:0 0 8px #4fc3d9}
+.nd-opt:hover input:not(:checked)+span{background:#2f7f8f}
+.nd-slider:hover{color:#d7dde2}
+.nd-slider:hover input{background-image:linear-gradient(#9bd64a,#9bd64a)}
+</style>
+<style id="nd-titlefont">
+/* Title in Verdana (sized down because Verdana is a wide font) */
+.nd-title{font-family:Verdana,"DejaVu Sans",Geneva,sans-serif;font-weight:400;font-size:24px;letter-spacing:.04em;line-height:38px}
+</style>
+<style id="nd-titlegif">
+/* Animated helmet right of the title (title.gif). It floats, so the tabs do not move.
+   "screen" makes the black background of the picture invisible on the dark panel. */
+.nd-title{position:relative;display:inline-block}
+.nd-title::after{content:"";position:absolute;left:100%;top:50%;width:44px;height:44px;margin:-23px 0 0 2px;background:url(title.gif) center/contain no-repeat;mix-blend-mode:screen;pointer-events:none}
+</style>
+<style id="nd-tabglow">
+/* Tabs: no box. Selected tab glows green, other tabs glow blue on hover */
+.nd-tab[aria-selected="true"]{background:none;border-color:transparent;box-shadow:none;color:#9bd64a;text-shadow:0 0 10px #9bd64a}
+.nd-tab:not([aria-selected="true"]):hover,.nd-tab:not([aria-selected="true"]):focus-visible{color:#4fc3d9;text-shadow:0 0 10px #4fc3d9}
+.nd-tab:focus,.nd-tab:focus-visible{outline:none}
+/* Tabs are only as big as their text, so the glow starts on the text itself */
+.nd-tabs{align-items:center;gap:18px}
+.nd-tab{padding:2px 4px;border:0}
+/* The beta tab is written in capitals */
+.nd-tab[data-tab="beta"]{text-transform:uppercase}
+</style>
+</head>
+<body class="nd-page">
+<div class="nd-bar"></div>
+<div class="nd-wc">
+<button data-w="minimize" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></button>
+<button data-w="maximize" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 10 10"><rect x=".6" y=".6" width="8.8" height="8.8"/></svg></button>
+<button data-w="close" title="Close" aria-label="Close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></button>
+</div>
+<div id="app"></div>
+<script src="nightdeck.js"></script>
+<script>
+// One tab per tool. "custom" areas are filled in by tools.js.
+const panel = Nightdeck.create("#app", {
+  title: "Nightdeck",
+  version: "v2.31", // bump this with every change
+  console: false,  // the console lives in its own window
+  onLog(msg) { if (window.nightdeckWindow) window.nightdeckWindow.log(msg); },
+  onSelect(name) { if (window.ndTabChanged) window.ndTabChanged(name); },
+  tabs: {
+    system: [
+      {id:"cpu", label:"cpu usage", meter:true}, {id:"mem", label:"memory", meter:true},
+      {id:"disk", label:"disk", meter:true},
+      {id:"temp", label:"system temp", meter:true}, {id:"gputemp", label:"gpu temp", meter:true},
+      {id:"host", label:"computer", info:true}, {id:"os", label:"system", info:true},
+      {id:"cpumodel", label:"processor", info:true}, {id:"cores", label:"cores", info:true},
+      {id:"uptime", label:"running for", info:true}
+    ],
+    apps: [{custom:"apps"}],
+    network: [{custom:"network"}],
+    launcher: [{custom:"launcher"}],
+    power: [{custom:"power"}],
+    clipboard: [{custom:"clipboard"}],
+    notes: [{custom:"notes"}],
+    timers: [{custom:"timers"}],
+    capture: [{custom:"capture"}],
+    tools: [{custom:"tools"}],
+    control: [{custom:"control"}],
+    beta: [] // empty for now
+  }
+});
+</script>
+<script src="tools.js"></script>
+</body>
+</html>

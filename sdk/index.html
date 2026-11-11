@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nightdeck demo</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;500&family=IBM+Plex+Mono:wght@400;500&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="nightdeck.css">
+</head>
+<body class="nd-page">
+<div id="app"></div>
+<script src="nightdeck.js"></script>
+<script>
+// Edit this config to change the tabs and options.
+const panel = Nightdeck.create("#app", {
+  title: "Nightdeck",
+  tabs: {
+    display: [
+      {id:"vsync", label:"vertical sync", on:true}, {id:"fullscreen", label:"fullscreen"},
+      {id:"hdr", label:"hdr output"}, {id:"fps", label:"show fps counter", on:true},
+      {id:"bloom", label:"bloom"}, {id:"shadows", label:"soft shadows", on:true},
+      {id:"aa", label:"anti-aliasing", on:true}, {id:"blur", label:"motion blur"},
+      {id:"brightness", label:"brightness", range:60}, {id:"fov", label:"field of view", range:45}
+    ],
+    audio: [
+      {id:"music", label:"music", on:true}, {id:"sfx", label:"sound effects", on:true},
+      {id:"voice", label:"voice chat"}, {id:"subs", label:"subtitles", on:true},
+      {id:"master", label:"master volume", range:80}, {id:"musicvol", label:"music volume", range:35}
+    ],
+    controls: [
+      {id:"invert", label:"invert y axis"}, {id:"rumble", label:"controller rumble", on:true},
+      {id:"autosave", label:"auto-save", on:true}, {id:"sens", label:"pointer sensitivity", range:50}
+    ],
+    advanced: [
+      {id:"devlog", label:"verbose logging"}, {id:"cache", label:"shader cache", on:true},
+      {id:"beta", label:"beta features"}, {id:"cachesz", label:"cache size", range:30}
+    ]
+  },
+  presets: {
+    quality: {hdr:true, bloom:true, shadows:true, aa:true, blur:true, brightness:65},
+    performance: {hdr:false, bloom:false, shadows:false, aa:false, blur:false, vsync:false}
+  },
+  onChange(id, value, all) {
+    // React to changes here, e.g. save them or update your app.
+  }
+});
+</script>
+</body>
+</html>

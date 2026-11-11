@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nightdeck Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;500&family=IBM+Plex+Mono:wght@400;500&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="nightdeck.css">
+<style>
+html,body{height:100%}
+body{margin:0;background:#15191d;overflow:hidden;-webkit-app-region:drag;user-select:none}
+.nd-root{position:fixed;inset:0;max-width:none;gap:0;flex-wrap:nowrap;align-items:stretch}
+.nd-win{box-shadow:none;outline:0;border:0}
+.nd-console{flex:1;height:auto;min-width:0}
+.nd-log{-webkit-app-region:no-drag;user-select:text}
+.nd-ctitle{font-family:Verdana,"DejaVu Sans",Geneva,sans-serif;font-weight:400;font-size:19px;letter-spacing:.04em;line-height:28px}
+.nd-creset{position:absolute;top:28px;right:18px;padding:4px 12px;-webkit-app-region:no-drag}
+</style>
+</head>
+<body>
+<div class="nd-root"><section class="nd-win nd-console"><div class="nd-inner">
+<h2 class="nd-ctitle">Console</h2><button class="nd-btn nd-creset" id="creset" title="Clear the console">reset</button><div class="nd-log" id="log" aria-live="polite"></div>
+</div></section></div>
+<script>
+const logEl = document.getElementById("log");
+function add(m){
+  if (typeof m === "string") m = { t: new Date().toTimeString().slice(0,8), text: m };
+  const line = document.createElement("div"), t = document.createElement("i");
+  t.textContent = "[" + m.t + "] ";
+  line.append(t, document.createTextNode(m.text));
+  logEl.append(line); logEl.scrollTop = logEl.scrollHeight;
+}
+document.getElementById("creset").addEventListener("click", () => {
+  logEl.textContent = "";
+  if (window.nightdeckWindow) window.nightdeckWindow.clearLog();
+});
+if (window.nightdeckWindow) window.nightdeckWindow.onLog(add); else add("console preview");
+</script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+NIGHTDECK - CHANGE LOG
+======================
+Everything built so far, oldest first. All of it was made on 10 November 2026.
+
+Version numbers were only shown in the app from v1.17 onward. The steps before
+that had no number at the time; they are listed here in order as v1.1 to v1.16.
+
+
+BEFORE THE APP (v0)
+-------------------
+v0.1  Nightdeck panel as a web page
+      - Original dark control panel: sidebar tabs, checkboxes, sliders,
+        preset buttons and a console that logs every change.
+v0.2  nightdeck-sdk folder
+      - The panel turned into a reusable kit: nightdeck.js, nightdeck.css,
+        a demo page, a second example and a README.
+
+
+NIGHTDECK ORIGINAL (v1.x)  -  folder: Nightdeck-win32-x64
+---------------------------------------------------------
+v1.0   First Windows app
+       - The panel in its own window, opened with Nightdeck.exe.
+       - Remembers settings between launches.
+v1.1   Panel fills the whole window instead of floating in the middle.
+v1.2   Windows title bar removed; own bar with minimize, maximize, close.
+v1.3   Own bar removed too; window buttons sit inside the panel.
+v1.4   Window can be dragged from any empty area.
+v1.5   Fixed: green glow of checked boxes was cut off on the left.
+v1.6   Fixed: title broke into two lines ("NIGHTDEC / K").
+v1.7   Minimum window size, so nothing gets cut off.
+v1.8   Fixed: leftover "ghost" pixels after resizing.
+v1.9   "reset layout" button: back to the original window size, centered.
+v1.10  Window buttons moved to the top-right corner of the main panel.
+v1.11  Console split into its own panel that moves and resizes with the
+       main panel and always stays aligned.
+v1.12  "console" button to show or hide the console panel.
+v1.13  "update" button to load new changes (by restarting the app).
+v1.14  "update" now reloads in place; the windows stay open. A restart only
+       happens when the app's core code changed.
+v1.15  App icon for the window, the taskbar and Nightdeck.exe.
+v1.16  Hover colours: switched-on boxes turn blue, switched-off boxes turn
+       dark blue, the filled part of a slider turns green.
+       "reset" button in the console to clear it.
+       (Bigger checkboxes were tried and removed again.)
+v1.17  Version label in the corner now counts up with every change.
+v1.18  Title and console heading in Verdana.
+v1.19  Side tabs without a box: selected tab glows green, hover glows blue.
+v1.20  Removed the blue rectangle around a selected tab.
+v1.21  Tabs glow only when the mouse is on the word itself.
+       >> Final version of the original. Kept unchanged since.
+
+
+NIGHTDECK UTILITY (v2.x)  -  folder: Nightdeck-Utility
+------------------------------------------------------
+v2.0   New copy of the app as a PC utility
+       - "system" tab: live CPU and memory bars, computer details.
+v2.1   Ten tools, one tab each
+       - system (adds disk and battery), apps (running programs with close),
+         network, launcher, power, clipboard, notes, timers, capture
+         (screenshot), tools (calculator, unit converter, colour picker).
+       - Placeholder tabs removed.
+v2.2   Console: long lines wrap under their own text.
+v2.3   Clipboard "clear" also empties the Windows history (Win + V).
+v2.4   Buttons inside tabs as plain text (not liked).
+v2.5   v2.4 undone; buttons have their boxes back.
+v2.6   "running for" shows seconds.
+       Fixed: disk text overlapped its label; battery bar was red at 100%.
+v2.7   Bars turn gold at 100%.
+v2.8   Bars are blue up to 50% and red above 50%.
+v2.9   Battery bar removed (desktop PC).
+v2.10  Bars share the full width; fewer per row in a narrow window.
+v2.11  Bars change colour while filling: blue first, red when passing 50%.
+v2.12  "system temp" and "gpu temp" bars (0 to 100 degrees C).
+v2.13  GPU temperature: looks for the NVIDIA tool in more places and logs
+       the reason when it fails.
+v2.14  Temperature converter shows "about equal to" for the third unit.
+v2.15  GPU temperature: also searches the Windows driver store.
+v2.16  Fixed: GPU reading with decimals (49.47) was rejected.
+v2.17  Tools tab rebuilt with its own menu
+       - standard, scientific, graphing, programmer, date calculation.
+       - Converter with 13 categories: currency, volume, length, weight,
+         temperature, energy, area, speed, time, power, data, pressure,
+         angle. Currency rates are fetched from the internet.
+       - Colour picker kept.
+v2.18  New "control" tab
+       - Volume slider and mute, brightness slider.
+       - Windows switches: dark mode for apps, dark mode for taskbar,
+         show file extensions, show hidden files.
+       - Cleanup: size of temporary files and recycle bin, with clear buttons.
+       - Tray icon, global hotkey (Control+Alt+N), start with Windows.
+v2.19  Small animated picture (title.gif) to the right of the title:
+       five moving bars, blue to green.
+v2.20  Title picture replaced with the rotating helmet animation
+       (purple crest, glowing blue eyes), 44 pixels high.
+v2.21  New empty "BETA" tab under control, for trying out new things.
+v2.22  Helmet animation smoother: 36 frames instead of 12 (blended
+       in-between frames), same turning speed.
+v2.23  Helmet animation at 60 frames, 50 per second (the fastest a GIF
+       can play), same turning speed.
+v2.24  Helmet turns slower: 1.5 seconds per turn instead of 1.2
+       (75 frames, still 50 per second).
+v2.25  Apps tab: each program shows its own icon in front of the name
+       (a plain square when Windows gives no icon).
+v2.26  Fixed: a very long number in the countdown box spilled over the
+       stopwatch and added a dead scroll bar. The box now takes 8
+       characters, the longest countdown is 99:59:59, and tabs can no
+       longer grow wider than the window.
+v2.27  Network tab rebuilt
+       - Live download and upload bars, live ping with a history line.
+       - Connection details: cable or Wi-Fi, adapter, link speed, router,
+         DNS servers, Wi-Fi name and signal.
+       - Copy buttons for the local, router and public IP.
+       - Speed test (download and upload, uses up to about 70 MB).
+       - Quick fixes: flush DNS, renew IP address.
+       - Devices on your network: address, name, hardware address.
+       - "browser reports" renamed to "status".
+v2.28  Scroll bar on the right of the tabs hidden. Long tabs still
+       scroll with the mouse wheel.
+v2.29  Fixed: after waking from sleep the console showed a false
+       "power: Command failed" line. Sleep itself had worked.
+v2.30  Fixed: the live download and upload bars showed about four
+       times the real speed. They now read the real network adapter
+       only, so virtual adapters are no longer counted on top.
+v2.31  Device scan now looks for every device on the home network
+       instead of only the ones the PC already knew, and lists this PC.
+       Fixed: in a scrolled tab, text slid under the window buttons.
+       >> Current version.
+
+
+TESTED ON THE PC (11 November 2026, v2.30)
+------------------------------------------
+Working:
+- Network tab: live download / upload bars (after the v2.30 fix), live
+  ping, connection details, check connection, speed test, flush DNS,
+  device scan
+- Control tab: scan of temporary files and recycle bin, tray icon
+  switch, start with Windows switch
+- Sleep (power tab)
+
+STILL TO TEST ON THE PC
+-----------------------
+- Renew IP (network tab) - drops the connection for a moment and
+  Windows asks for permission
+- Emptying the recycle bin - it was empty during the test
+- That the tray icon is visible and Nightdeck really starts after a
+  reboot (the switches work; the result was not looked at)
+
+KNOWN SMALL THINGS
+------------------
+- None open. (Device scan and text under the window buttons were
+  fixed in v2.31.)

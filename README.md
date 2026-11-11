@@ -1,0 +1,72 @@
+# Nightdeck
+
+A dark control-panel style PC utility for Windows, built with Electron. One window with text tabs on the left, plus a separate console panel that stays glued to its right side and logs everything the app does.
+
+![Network tab](docs/screenshots/network.png)
+
+Current version: **v2.31**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
+
+## What it does
+
+| Tab | What is in it |
+| --- | --- |
+| system | Live CPU, memory, disk, system temperature and GPU temperature bars, plus computer details |
+| apps | Running programs with their icons, CPU and memory use, and a close button |
+| network | Live download / upload bars, live ping with history, connection details, speed test, flush DNS, renew IP, device scan |
+| launcher | Your own buttons for programs, folders and links |
+| power | Lock, sleep, restart, shut down (each asks first) |
+| clipboard | Clipboard history, kept in memory only |
+| notes | A notepad that saves as you type |
+| timers | Countdown and stopwatch |
+| capture | Screenshots |
+| tools | Standard, scientific, graphing and programmer calculators, date calculation, a converter with 13 categories, colour picker |
+| control | Volume, brightness, Windows switches (dark mode, file extensions, hidden files), cleanup, tray icon, global hotkey, start with Windows |
+| BETA | Empty, reserved for experiments |
+
+Bars are blue up to 50%, red above 50% and gold at 100%.
+
+## Folders
+
+| Folder | Contents |
+| --- | --- |
+| `utility/` | The current app (v2.x). This is the code Electron runs. |
+| `original/` | The first panel app, finished at v1.21 and kept unchanged. |
+| `sdk/` | The reusable panel kit (plain HTML, CSS, JavaScript) the apps grew out of. |
+| `docs/screenshots/` | Pictures of the tabs. |
+
+Inside `utility/`:
+
+- `main.js` - windows and everything that talks to Windows
+- `preload.js` - the bridge between the two
+- `index.html` - tab list and version number
+- `nightdeck.js`, `nightdeck.css` - the panel library
+- `tools.js`, `tools.css` - the tool tabs
+- `console.html` - the console panel
+
+## Running it
+
+Nightdeck is made for Windows 11. You need [Node.js](https://nodejs.org).
+
+```
+cd utility
+npm install --no-save electron@33
+npx electron .
+```
+
+Most system features (temperatures, volume, Windows switches, network details) only work on Windows. On other systems those readings say so.
+
+The packaged program files (`Nightdeck.exe` and the Electron runtime) are not in this repository because of their size.
+
+## More screenshots
+
+| | |
+| --- | --- |
+| ![system](docs/screenshots/system.png) | ![tools](docs/screenshots/tools.png) |
+| ![graphing](docs/screenshots/tools-graphing.png) | ![converter](docs/screenshots/tools-converter.png) |
+| ![control](docs/screenshots/control.png) | ![console](docs/screenshots/console.png) |
+
+These six pictures are from v2.18 on a test machine, so some readings are empty and the newer title animation is missing.
+
+## Status
+
+A personal project by mvhmuod. No licence has been chosen yet, so all rights are reserved.

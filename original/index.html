@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nightdeck</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;500&family=IBM+Plex+Mono:wght@400;500&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="nightdeck.css">
+<style id="nd-fill">
+/* Fill the whole window */
+html,body{height:100%}
+body.nd-page{padding:0;display:block;background:#15191d;overflow:hidden}
+.nd-root{max-width:none;position:fixed;inset:0;height:auto;gap:0;flex-wrap:nowrap;align-items:stretch;background:#15191d}
+.nd-win{box-shadow:none;outline:0;border:0}
+.nd-menu{flex:1 1 auto;min-width:0}
+.nd-body{min-height:0}
+.nd-panes{min-height:0}
+.nd-pane{min-height:0;overflow:auto;padding-left:12px;padding-right:12px;padding-bottom:12px}
+.nd-console{flex:0 0 320px;height:auto;border-left:1px solid #2a3138}
+@media (max-width:760px){.nd-console{display:none}}
+</style>
+<style id="nd-bar-css">
+/* No title bar: invisible drag strip on top, window buttons sit inside the panel */
+.nd-bar{position:fixed;top:0;left:0;right:0;height:24px;z-index:5;-webkit-app-region:drag}
+.nd-bar span{display:none}
+.nd-title,.nd-ctitle{-webkit-app-region:drag;user-select:none}
+.nd-wc{position:absolute;top:18px;right:12px;z-index:6;display:flex;gap:4px;-webkit-app-region:no-drag}
+.nd-wc button{width:22px;height:18px;border:1px solid #000;background:linear-gradient(#333b43,#232a30);color:#d7dde2;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.nd-wc button:hover{background:linear-gradient(#3d4750,#2a3239)}
+.nd-wc button[data-w="close"]:hover{background:#c8323c;color:#fff}
+.nd-wc button:focus-visible{outline:1px solid #4fc3d9;outline-offset:1px}
+.nd-wc svg{width:8px;height:8px;stroke:currentColor;fill:none;stroke-width:1.3}
+</style>
+<style id="nd-drag-all">
+/* Drag the window from any empty area; controls stay clickable */
+body.nd-page{-webkit-app-region:drag;user-select:none}
+.nd-tab,.nd-opt,.nd-slider,.nd-btn,.nd-log,.nd-wc,.nd-wc button{-webkit-app-region:no-drag}
+.nd-log{user-select:text}
+</style>
+<style id="nd-hoverblue">
+/* Hover: checkboxes turn blue, sliders get the same blue glow */
+.nd-opt:hover input:checked+span{background:#4fc3d9;box-shadow:0 0 8px #4fc3d9}
+.nd-opt:hover input:not(:checked)+span{background:#2f7f8f}
+.nd-slider:hover{color:#d7dde2}
+.nd-slider:hover input{background-image:linear-gradient(#9bd64a,#9bd64a)}
+</style>
+<style id="nd-titlefont">
+/* Title in Verdana (sized down because Verdana is a wide font) */
+.nd-title{font-family:Verdana,"DejaVu Sans",Geneva,sans-serif;font-weight:400;font-size:24px;letter-spacing:.04em;line-height:38px}
+</style>
+<style id="nd-tabglow">
+/* Tabs: no box. Selected tab glows green, other tabs glow blue on hover */
+.nd-tab[aria-selected="true"]{background:none;border-color:transparent;box-shadow:none;color:#9bd64a;text-shadow:0 0 10px #9bd64a}
+.nd-tab:not([aria-selected="true"]):hover,.nd-tab:not([aria-selected="true"]):focus-visible{color:#4fc3d9;text-shadow:0 0 10px #4fc3d9}
+.nd-tab:focus,.nd-tab:focus-visible{outline:none}
+/* Tabs are only as big as their text, so the glow starts on the text itself */
+.nd-tabs{align-items:center;gap:18px}
+.nd-tab{padding:2px 4px;border:0}
+</style>
+</head>
+<body class="nd-page">
+<div class="nd-bar"></div>
+<div class="nd-wc">
+<button data-w="minimize" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></button>
+<button data-w="maximize" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 10 10"><rect x=".6" y=".6" width="8.8" height="8.8"/></svg></button>
+<button data-w="close" title="Close" aria-label="Close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></button>
+</div>
+<div id="app"></div>
+<script src="nightdeck.js"></script>
+<script>
+// Edit this config to change the tabs and options.
+const panel = Nightdeck.create("#app", {
+  title: "Nightdeck",
+  version: "v1.21", // bump this with every change
+  console: false, // the console lives in its own window
+  onLog(msg) { if (window.nightdeckWindow) window.nightdeckWindow.log(msg); },
+  tabs: {
+    display: [
+      {id:"vsync", label:"vertical sync", on:true}, {id:"fullscreen", label:"fullscreen"},
+      {id:"hdr", label:"hdr output"}, {id:"fps", label:"show fps counter", on:true},
+      {id:"bloom", label:"bloom"}, {id:"shadows", label:"soft shadows", on:true},
+      {id:"aa", label:"anti-aliasing", on:true}, {id:"blur", label:"motion blur"},
+      {id:"brightness", label:"brightness", range:60}, {id:"fov", label:"field of view", range:45}
+    ],
+    audio: [
+      {id:"music", label:"music", on:true}, {id:"sfx", label:"sound effects", on:true},
+      {id:"voice", label:"voice chat"}, {id:"subs", label:"subtitles", on:true},
+      {id:"master", label:"master volume", range:80}, {id:"musicvol", label:"music volume", range:35}
+    ],
+    controls: [
+      {id:"invert", label:"invert y axis"}, {id:"rumble", label:"controller rumble", on:true},
+      {id:"autosave", label:"auto-save", on:true}, {id:"sens", label:"pointer sensitivity", range:50}
+    ],
+    advanced: [
+      {id:"devlog", label:"verbose logging"}, {id:"cache", label:"shader cache", on:true},
+      {id:"beta", label:"beta features"}, {id:"cachesz", label:"cache size", range:30}
+    ]
+  },
+  presets: {
+    quality: {hdr:true, bloom:true, shadows:true, aa:true, blur:true, brightness:65},
+    performance: {hdr:false, bloom:false, shadows:false, aa:false, blur:false, vsync:false}
+  },
+  onChange(id, value, all) {
+    // Remember settings between launches.
+    try { localStorage.setItem("nightdeck-settings", JSON.stringify(all)); } catch (e) {}
+  }
+});
+try {
+  const saved = JSON.parse(localStorage.getItem("nightdeck-settings") || "{}");
+  for (const id in saved) panel.set(id, saved[id], true);
+  if (Object.keys(saved).length) panel.log("restored saved settings");
+} catch (e) {}
+</script>
+<script>
+// "reset layout" button: puts the window back to its original size, centered
+(function(){
+  const b = document.createElement("button");
+  b.className = "nd-btn"; b.textContent = "reset layout"; b.title = "Restore the original window size";
+  b.addEventListener("click", () => { if (window.nightdeckWindow) window.nightdeckWindow.resetSize(); panel.log("window layout reset"); });
+  const foot = document.querySelector(".nd-foot");
+  foot.insertBefore(b, foot.querySelector("small"));
+  // "console" button: show or hide the console panel
+  const c = document.createElement("button");
+  c.className = "nd-btn"; c.textContent = "console"; c.title = "Show or hide the console";
+  c.addEventListener("click", () => { if (window.nightdeckWindow) window.nightdeckWindow.toggleConsole(); });
+  foot.insertBefore(c, foot.querySelector("small"));
+  // "update" button: restart the app to load the newest version
+  const u = document.createElement("button");
+  u.className = "nd-btn"; u.textContent = "update"; u.title = "Load the latest changes";
+  u.addEventListener("click", () => { if (window.nightdeckWindow) window.nightdeckWindow.update(); });
+  foot.insertBefore(u, foot.querySelector("small"));
+})();
+// window buttons live in the top-right corner of the menu panel
+document.querySelector(".nd-menu").append(document.querySelector(".nd-wc"));
+document.querySelector(".nd-wc").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (window.nightdeckWindow) window.nightdeckWindow[b.dataset.w]();
+});
+</script>
+</body>
+</html>
