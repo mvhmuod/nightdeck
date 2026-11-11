@@ -124,6 +124,15 @@ v2.30  Fixed: the live download and upload bars showed about four
 v2.31  Device scan now looks for every device on the home network
        instead of only the ones the PC already knew, and lists this PC.
        Fixed: in a scrolled tab, text slid under the window buttons.
+v2.32  System tab extended
+       - GPU usage and GPU memory bars.
+       - One disk bar per drive (C:, D:, E: ...).
+       - History line of the last minute under CPU and memory.
+       - Busiest program and the one using the most memory.
+       - More details: graphics card, mainboard, memory modules, screens.
+       - "system temp" renamed to "mainboard temp" (it is a mainboard
+         sensor, Windows does not give out the processor temperature).
+       - "copy specs" button.
        >> Current version.
 
 

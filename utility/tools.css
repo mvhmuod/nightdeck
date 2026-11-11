@@ -75,6 +75,13 @@ select.nd-input{max-width:190px}
 /* the tab area begins below the window buttons, so scrolled text cannot slide under them */
 .nd-panes{padding-top:16px}
 .nd-panes .nd-pane{padding-top:26px}
+/* system tab: history line under cpu and memory, copy button row */
+.nd-hist{width:100%; height:22px; display:block}
+.nd-pane[data-pane="system"] .nd-meter>div:first-child{white-space:nowrap}
+.nd-pane[data-pane="system"] .nd-info{min-width:0; max-width:100%}
+.nd-pane[data-pane="system"] .nd-info output{min-width:0}
+.nd-pane[data-pane="system"] .nd-info span{white-space:nowrap}
+.nd-pane[data-pane="system"] .nd-specs{flex:1 1 100%; margin-top:4px}
 /* network tab */
 .nd-netbars{gap:9px 18px}
 .nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}

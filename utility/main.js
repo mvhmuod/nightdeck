@@ -471,7 +471,7 @@ async function readTemps() {
     const smi = (async () => {
       let last = { ok: false, out: "", err: "nvidia-smi not found" };
       for (const exe of smiPaths) {
-        last = await run(exe, ["--query-gpu=temperature.gpu,name", "--format=csv,noheader,nounits"], 10000);
+        last = await run(exe, ["--query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total,name", "--format=csv,noheader,nounits"], 10000);
         if (last.ok) break;
       }
       return last;
@@ -483,9 +483,17 @@ async function readTemps() {
     const [gpu, zone] = await Promise.all(jobs);
     if (gpu.ok) {
       // the reading can be whole ("49") or decimal ("49.47" / "49,47")
-      const m = /^\s*(\d+(?:[.,]\d+)?)\s*,\s*(\D.*)$/m.exec(gpu.out);
-      const deg = m ? Number(m[1].replace(",", ".")) : NaN;
-      if (m && sane(deg)) { val.gpu = deg; val.gpuName = m[2].trim(); }
+      // temperature, usage %, memory used MiB, memory total MiB, name (a value can be "[N/A]")
+      const m = /^\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*(.+?)\s*$/m.exec(gpu.out);
+      const num = t => { const n = Number(String(t).trim()); return isFinite(n) && /\d/.test(t) ? n : null; };
+      const deg = m ? num(m[1]) : null;
+      if (m) {
+        val.gpuName = m[5].trim();
+        const use = num(m[2]), used = num(m[3]), total = num(m[4]);
+        if (use != null && use >= 0 && use <= 100) val.gpuUse = use;
+        if (used != null && total) { val.vramUsed = used; val.vramTotal = total; }
+      }
+      if (m && deg != null && sane(deg)) val.gpu = deg;
       else val.gpuError = "unexpected reply: " + gpu.out.trim().slice(0, 80);
     } else val.gpuError = (gpu.err || "nvidia-smi failed").trim().split(/\r?\n/)[0].slice(0, 120);
     if (zone && zone.out.trim()) {
@@ -747,16 +755,54 @@ function settingSet(key, value) {
 }
 
 // ---- Everything the tool tabs can ask the app to do ----
+// every drive with its size and free space (looked up again every 10 seconds)
+let diskCache = { t: 0, list: [] };
+function listDisks() {
+  if (Date.now() - diskCache.t < 10000) return diskCache.list;
+  const list = [], roots = WIN ? "CDEFGHIJKLMNOPQRSTUVWXYZ".split("").map(l => l + ":\\") : [path.parse(os.homedir()).root];
+  for (const root of roots) {
+    try {
+      if (WIN && !fs.existsSync(root)) continue;
+      const st = fs.statfsSync(root), total = st.blocks * st.bsize;
+      if (total > 0) list.push({ root, total, free: st.bavail * st.bsize });
+    } catch (e) {}
+  }
+  diskCache = { t: Date.now(), list };
+  return list;
+}
+// details that do not change while the PC runs: mainboard, memory modules, screens
+let extraCache = null;
+async function sysExtra() {
+  if (extraCache) return extraCache;
+  const out = { board: "", ram: "", screens: "" };
+  try {
+    out.screens = screen.getAllDisplays().map(s => Math.round(s.size.width * s.scaleFactor) + " x " + Math.round(s.size.height * s.scaleFactor) +
+      (s.displayFrequency ? " @ " + Math.round(s.displayFrequency) + " Hz" : "")).join(",  ");
+  } catch (e) {}
+  if (WIN) {
+    const r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "$ErrorActionPreference='SilentlyContinue'; $b=Get-CimInstance Win32_BaseBoard | Select-Object -First 1 Manufacturer,Product; " +
+      "$m=@(Get-CimInstance Win32_PhysicalMemory | Select-Object Capacity,Speed); [pscustomobject]@{board=$b;mem=$m} | ConvertTo-Json -Compress -Depth 3"], 20000);
+    try {
+      const j = JSON.parse(r.out);
+      if (j.board) out.board = [j.board.Manufacturer, j.board.Product].filter(Boolean).join(" ").trim();
+      const m = [].concat(j.mem || []).filter(Boolean);
+      if (m.length) {
+        const sizes = m.map(x => Math.round(Number(x.Capacity) / 1073741824)), speed = Math.max(...m.map(x => Number(x.Speed) || 0));
+        out.ram = (sizes.every(s => s === sizes[0]) ? m.length + " x " + sizes[0] + " GB" : sizes.join(" + ") + " GB") + (speed ? ", " + speed + " MHz" : "");
+      }
+    } catch (e) {}
+  }
+  extraCache = out;
+  return out;
+}
 const API = {
+  sysExtra,
   sys() {
     const cpus = os.cpus();
-    let disk = null;
-    try {
-      const root = path.parse(os.homedir()).root, st = fs.statfsSync(root);
-      disk = { root, total: st.blocks * st.bsize, free: st.bavail * st.bsize };
-    } catch (e) {}
+    const disks = listDisks(), disk = disks[0] || null;
     return {
-      cpu: cpuPercent(), memTotal: os.totalmem(), memFree: os.freemem(), uptime: os.uptime(), disk,
+      cpu: cpuPercent(), memTotal: os.totalmem(), memFree: os.freemem(), uptime: os.uptime(), disk, disks,
       host: os.hostname(), cpuModel: cpus[0] ? cpus[0].model.trim() : "unknown", cores: cpus.length,
       system: (os.version ? os.version() : os.type()) + " (" + os.arch() + ")"
     };

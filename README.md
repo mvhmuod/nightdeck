@@ -4,13 +4,13 @@ A dark control-panel style PC utility for Windows, built with Electron. One wind
 
 ![Network tab](docs/screenshots/network.png)
 
-Current version: **v2.31**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
+Current version: **v2.32**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
 
 ## What it does
 
 | Tab | What is in it |
 | --- | --- |
-| system | Live CPU, memory, disk, system temperature and GPU temperature bars, plus computer details |
+| system | Live CPU and memory bars with history, a bar per drive, GPU usage, GPU memory and temperatures, busiest program, hardware details |
 | apps | Running programs with their icons, CPU and memory use, and a close button |
 | network | Live download / upload bars, live ping with history, connection details, speed test, flush DNS, renew IP, device scan |
 | launcher | Your own buttons for programs, folders and links |

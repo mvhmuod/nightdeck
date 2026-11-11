@@ -80,7 +80,7 @@ body.nd-page{-webkit-app-region:drag;user-select:none}
 // One tab per tool. "custom" areas are filled in by tools.js.
 const panel = Nightdeck.create("#app", {
   title: "Nightdeck",
-  version: "v2.31", // bump this with every change
+  version: "v2.32", // bump this with every change
   console: false,  // the console lives in its own window
   onLog(msg) { if (window.nightdeckWindow) window.nightdeckWindow.log(msg); },
   onSelect(name) { if (window.ndTabChanged) window.ndTabChanged(name); },
@@ -88,9 +88,13 @@ const panel = Nightdeck.create("#app", {
     system: [
       {id:"cpu", label:"cpu usage", meter:true}, {id:"mem", label:"memory", meter:true},
       {id:"disk", label:"disk", meter:true},
-      {id:"temp", label:"system temp", meter:true}, {id:"gputemp", label:"gpu temp", meter:true},
+      {id:"gpu", label:"gpu usage", meter:true}, {id:"vram", label:"gpu memory", meter:true},
+      {id:"temp", label:"mainboard temp", meter:true}, {id:"gputemp", label:"gpu temp", meter:true},
+      {id:"topcpu", label:"busiest program", info:true}, {id:"topmem", label:"most memory", info:true},
       {id:"host", label:"computer", info:true}, {id:"os", label:"system", info:true},
       {id:"cpumodel", label:"processor", info:true}, {id:"cores", label:"cores", info:true},
+      {id:"gpuname", label:"graphics", info:true}, {id:"board", label:"mainboard", info:true},
+      {id:"ram", label:"memory modules", info:true}, {id:"screens", label:"screens", info:true},
       {id:"uptime", label:"running for", info:true}
     ],
     apps: [{custom:"apps"}],

@@ -47,14 +47,42 @@
     const dur = s => { const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + "d " : "") + hh + "h " + String(m).padStart(2, "0") + "m " + String(Math.floor(s % 60)).padStart(2, "0") + "s"; };
     let first = true, warned = false, battery = null;
     if (navigator.getBattery) navigator.getBattery().then(b => { battery = b; }).catch(() => {});
+    // one bar per drive: the first uses the built-in "disk" bar, the others are added after it
+    const pane = document.querySelector('[data-pane="system"]'), diskEl = pane.querySelector('[data-meter="disk"]'), made = {};
+    function drives(list) {
+      if (!list.length) { panel.setMeter("disk", 0, "not available"); return; }
+      let after = diskEl;
+      list.forEach((d, i) => {
+        const letter = String(d.root).replace(/[\\/]+$/, "").toLowerCase() || "/", id = i === 0 ? "disk" : "disk-" + letter.replace(/\W/g, "");
+        if (i === 0) { const t = diskEl.firstChild.firstChild; if (t && t.nodeValue !== "disk " + letter) t.nodeValue = "disk " + letter; }
+        else {
+          if (!made[id]) { made[id] = h("div", { class: "nd-meter", "data-meter": id }, h("div", null, "disk " + letter, h("output")), h("div", { class: "nd-meterbar" }, h("i"))); after.insertAdjacentElement("afterend", made[id]); }
+          after = made[id];
+        }
+        panel.setMeter(id, (d.total - d.free) / d.total * 100, gb(d.free) + " GB free of " + Math.round(d.total / 1073741824) + " GB");
+      });
+    }
+    // the last minute of cpu and memory use as a thin line under each bar
+    const hist = { cpu: [], mem: [] }, cv = {};
+    for (const k of ["cpu", "mem"]) { const m = pane.querySelector('[data-meter="' + k + '"]'); if (m) { cv[k] = h("canvas", { class: "nd-hist" }); m.append(cv[k]); } }
+    function drawHist() {
+      for (const k in cv) {
+        const a = hist[k]; while (a.length > 60) a.shift();
+        const c = cv[k], w = c.clientWidth, hh = c.clientHeight; if (!w || !hh) continue;
+        const dpr = window.devicePixelRatio || 1; c.width = Math.round(w * dpr); c.height = Math.round(hh * dpr);
+        const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.strokeStyle = "#4fc3d9"; g.lineWidth = 1.2; g.beginPath();
+        a.forEach((v, i) => { const x = w - 1 - (a.length - 1 - i) * (w / 59), y = hh - 2 - Math.max(0, Math.min(100, v)) / 100 * (hh - 4); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+        g.stroke();
+      }
+    }
     async function tick() {
       try {
         const s = await api("sys");
         const used = s.memTotal - s.memFree, memPct = used / s.memTotal * 100;
         panel.setMeter("cpu", s.cpu);
         panel.setMeter("mem", memPct, gb(used) + " / " + gb(s.memTotal) + " GB");
-        if (s.disk) panel.setMeter("disk", (s.disk.total - s.disk.free) / s.disk.total * 100, gb(s.disk.free) + " GB free of " + Math.round(s.disk.total / 1073741824) + " GB");
-        else panel.setMeter("disk", 0, "not available");
+        drives(s.disks && s.disks.length ? s.disks : (s.disk ? [s.disk] : []));
+        hist.cpu.push(s.cpu); hist.mem.push(memPct); drawHist();
         if (battery) panel.setMeter("battery", battery.level * 100, Math.round(battery.level * 100) + "%" + (battery.charging ? " - plugged in" : " - on battery"), battery.level <= 0.15 && !battery.charging);
         else panel.setMeter("battery", 0, "not available");
         panel.setInfo("uptime", dur(s.uptime));
@@ -74,9 +102,28 @@
         const t = await api("temps");
         if (t.system != null) panel.setMeter("temp", t.system, Math.round(t.system) + " \u00b0C"); else panel.setMeter("temp", 0, "not reported by this PC");
         if (t.gpu != null) panel.setMeter("gputemp", t.gpu, Math.round(t.gpu) + " \u00b0C"); else panel.setMeter("gputemp", 0, "not reported by this PC");
+        if (t.gpuUse != null) panel.setMeter("gpu", t.gpuUse); else panel.setMeter("gpu", 0, "not reported by this PC");
+        if (t.vramTotal) panel.setMeter("vram", t.vramUsed / t.vramTotal * 100, (t.vramUsed / 1024).toFixed(1) + " / " + (t.vramTotal / 1024).toFixed(1) + " GB"); else panel.setMeter("vram", 0, "not reported by this PC");
+        panel.setInfo("gpuname", t.gpuName || "not reported");
         if (!temps.logged) { temps.logged = true; log("temperature: system " + (t.system != null ? Math.round(t.system) + " C" : "not available") + ", gpu " + (t.gpu != null ? Math.round(t.gpu) + " C (" + t.gpuName + ")" : "not available" + (t.gpuError ? " - " + t.gpuError : ""))); }
       } catch (e) {}
     }
+    api("sysExtra").then(x => { panel.setInfo("board", x.board || "not reported"); panel.setInfo("ram", x.ram || "not reported"); panel.setInfo("screens", x.screens || "not reported"); }).catch(() => {});
+    // which program is using the most right now
+    async function top() {
+      try {
+        const p = await api("procs"); if (!p || !p.length) return;
+        const c = p.filter(x => x.cpu != null).sort((a, b) => b.cpu - a.cpu)[0], m = p.slice().sort((a, b) => b.mem - a.mem)[0];
+        if (c) panel.setInfo("topcpu", c.name + "  (" + c.cpu.toFixed(1) + "%)");
+        if (m) panel.setInfo("topmem", m.name + "  (" + size(m.mem) + ")");
+      } catch (e) {}
+    }
+    top(); setInterval(() => { if (active === "system") top(); }, 5000);
+    pane.append(h("div", { class: "nd-row nd-specs" }, btn("copy specs", () => {
+      const text = [...pane.querySelectorAll("[data-info]")].filter(r => !/^(uptime|topcpu|topmem)$/.test(r.dataset.info))
+        .map(r => r.querySelector("span").textContent + ": " + r.querySelector("output").textContent).join("\n");
+      api("copyText", text).then(() => log("system details copied")).catch(e => log("copy failed: " + e.message));
+    })));
     temps(); setInterval(() => { if (active === "system") temps(); }, 5000);
     tick(); setInterval(tick, 1000);
   })();
