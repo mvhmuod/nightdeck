@@ -238,6 +238,23 @@ v2.42  Control tab extended
        - Buttons for common Windows settings pages.
        - Nightdeck: always on top, window opacity, start hidden in the
          tray, back up and restore all Nightdeck data.
+v2.43  BETA tab filled
+       - Feature switches: turn each beta feature on or off.
+       - Profiles: save power plan, volume, sound output, night light,
+         dark mode and transparency; apply with one click.
+       - Game mode: high performance, no notification banners, chosen
+         programs closed; turning it off puts everything back.
+       - GPU details: temperature, usage, fan, memory, power, clocks.
+       - Overlay: small always-on-top line with CPU, RAM and GPU.
+       - Screens: brightness per screen, main screen only / extend /
+         duplicate.
+       - Command search: hotkey (Ctrl+Alt+Space) or Ctrl+K, type to
+         find and run any button or switch.
+       - Scheduled actions: at a time or when a program starts.
+       - Heavy program alerts: notification when a program uses too
+         much CPU or memory for a few minutes.
+       - Usage time: how long each program was in front, today and
+         the last 7 days.
        >> Current version.
 
 
