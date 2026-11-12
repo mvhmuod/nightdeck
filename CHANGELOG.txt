@@ -224,6 +224,20 @@ v2.41  Tools tab, second part
        - New "text" page: counts, upper/lower/title case, trim, remove
          empty or duplicate lines, sort, reverse, Base64 and URL
          encode/decode, undo, copy.
+v2.42  Control tab extended
+       - Choose the sound output and microphone; mute the microphone.
+       - Volume per program, with mute.
+       - Night light switch.
+       - More Windows switches: transparency, desktop icons, taskbar
+         auto-hide, notification banners.
+       - Wallpaper: pick a picture, fill / fit / stretch / center / span.
+       - Wi-Fi and Bluetooth switches.
+       - Drives with free space, open a drive or storage settings.
+       - More cleanup: Windows update downloads, thumbnail cache, crash
+         dumps, Chrome / Edge / Firefox caches, each asks first.
+       - Buttons for common Windows settings pages.
+       - Nightdeck: always on top, window opacity, start hidden in the
+         tray, back up and restore all Nightdeck data.
        >> Current version.
 
 

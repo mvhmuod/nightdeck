@@ -1719,7 +1719,8 @@
     const bri = slider("brightness");
     bri.inp.addEventListener("change", async () => { try { const r = await api("brightness", Number(bri.inp.value)); if (r.ok) { bri.set(r.level); log("brightness set to " + r.level + "%"); } else { bri.note("not supported"); log("brightness: " + r.msg); } } catch (e) { bri.note(e.message); } });
     // Windows switches
-    const names = { appsDark: "dark mode for apps", sysDark: "dark mode for taskbar and start", showExt: "show file extensions", showHidden: "show hidden files" };
+    const names = { appsDark: "dark mode for apps", sysDark: "dark mode for taskbar and start", showExt: "show file extensions", showHidden: "show hidden files",
+      transparency: "transparency effects", icons: "desktop icons", autoHide: "hide the taskbar automatically", toasts: "notification banners" };
     const sw = {};
     for (const id in names) sw[id] = toggle(names[id], async (on, inp) => {
       try { const r = await api("switchSet", id, on); if (r.ok) log(names[id] + ": " + (on ? "on" : "off")); else { inp.checked = !on; log(names[id] + " could not be changed: " + r.msg); } }
@@ -1746,7 +1747,7 @@
     // app behaviour
     const accel = h("input", { class: "nd-input", size: "18", spellcheck: "false" }), hkNote = h("span", { class: "nd-dim" });
     function showSettings(s) {
-      tray.inp.checked = s.tray; hot.inp.checked = s.hotkey; login.inp.checked = s.login; if (document.activeElement !== accel) accel.value = s.accel;
+      tray.inp.checked = s.tray; hot.inp.checked = s.hotkey; login.inp.checked = s.login; onTop.inp.checked = !!s.onTop; startTray.inp.checked = !!s.startTray; setOpa(Math.round((s.opacity || 1) * 100)); if (document.activeElement !== accel) accel.value = s.accel;
       hkNote.textContent = s.hotkey ? (s.hotkeyOk ? "active" : "could not be registered - another program may use it") : "";
     }
     const setS = async (k, v, label) => { try { const s = await api("settingSet", k, v); showSettings(s); log(label); } catch (e) { log("setting not saved: " + e.message); api("settingsGet").then(showSettings).catch(() => {}); } };
@@ -1756,19 +1757,158 @@
     const setAccel = btn("set", () => setS("accel", accel.value, "hotkey set to " + accel.value));
     accel.addEventListener("keydown", e => { if (e.key === "Enter") setAccel.click(); });
 
+    // audio devices and microphone
+    const outSel = h("select", { class: "nd-input nd-grow" }), inSel = h("select", { class: "nd-input nd-grow" }), micNote = h("span", { class: "nd-dim" });
+    const mic = toggle("mute microphone", async (on, inp) => {
+      try { const r = await api("micMute", on); if (r.ok) { inp.checked = r.mute; log("microphone " + (r.mute ? "muted" : "on")); } else { inp.checked = !on; log("microphone: " + r.msg); } }
+      catch (e) { inp.checked = !on; log("microphone: " + e.message); }
+    });
+    async function loadDevices() {
+      try {
+        const r = await api("audioDevices"); if (!r.ok) { micNote.textContent = r.msg; return; } micNote.textContent = "";
+        for (const [s, list] of [[outSel, r.out], [inSel, r.in]]) {
+          s.textContent = ""; if (!list.length) s.append(h("option", { value: "", text: "none found" }));
+          for (const d of list) { s.append(h("option", { value: d.id, text: d.name })); if (d.def) s.value = d.id; }
+        }
+        mic.inp.checked = !!r.micMute; mic.inp.disabled = !r.mic;
+      } catch (e) { micNote.textContent = e.message; }
+    }
+    for (const [s, label] of [[outSel, "sound output"], [inSel, "microphone"]]) s.addEventListener("change", async () => {
+      if (!s.value) return;
+      try { const r = await api("audioDefault", s.value); log(r.ok ? label + ": " + s.options[s.selectedIndex].text : label + " not changed: " + r.msg); } catch (e) { log(label + ": " + e.message); }
+      loadDevices(); loadMixer();
+    });
+    // volume per program
+    const mixer = h("div", { class: "nd-kv" });
+    async function loadMixer() {
+      try {
+        const r = await api("appVolumes"); mixer.textContent = "";
+        if (!r.ok) { mixer.append(h("span", { class: "nd-dim", text: r.msg })); return; }
+        if (!r.list.length) mixer.append(h("span", { class: "nd-dim", text: "no program is using sound right now" }));
+        for (const a of r.list) {
+          const sl = slider(a.name); sl.set(a.vol);
+          const mu = toggle("mute", async (on, inp) => { try { const x = await api("appVolume", a.pid, null, on); if (!x.ok) { inp.checked = !on; log(a.name + ": " + x.msg); } else log(a.name + (on ? " muted" : " unmuted")); } catch (e) { inp.checked = !on; } });
+          mu.inp.checked = a.mute;
+          sl.inp.addEventListener("change", async () => { try { const x = await api("appVolume", a.pid, Number(sl.inp.value), null); if (x.ok) log(a.name + " volume " + x.vol + "%"); else sl.note(x.msg); } catch (e) { sl.note(e.message); } });
+          mixer.append(h("div", { class: "nd-mix" }, sl.el, mu.el));
+        }
+      } catch (e) { mixer.textContent = e.message; }
+    }
+    // night light
+    const night = toggle("night light", async (on, inp) => {
+      try { const r = await api("nightLight", on); if (r.ok) { inp.checked = r.on; log("night light " + (r.on ? "on" : "off")); } else { inp.checked = !on; log("night light: " + r.msg); } }
+      catch (e) { inp.checked = !on; log("night light: " + e.message); }
+    });
+    // wi-fi and bluetooth
+    const radios = h("div", { class: "nd-grid2" }), radioNote = h("span", { class: "nd-dim" });
+    async function loadRadios(r) {
+      try {
+        r = r || await api("radios"); radios.textContent = "";
+        if (!r.ok && !(r.list && r.list.length)) { radioNote.textContent = r.msg; return; }
+        radioNote.textContent = r.list.length ? "" : "no wi-fi or bluetooth hardware found";
+        for (const x of r.list) {
+          const label = x.kind === "WiFi" ? "wi-fi" : "bluetooth";
+          const t = toggle(label, async (on, inp) => {
+            inp.disabled = true;
+            try { const y = await api("radioSet", x.kind, on); log(label + (y.ok ? " " + (on ? "on" : "off") : ": " + y.msg)); loadRadios(y); } catch (e) { log(label + ": " + e.message); loadRadios(); }
+          });
+          t.inp.checked = x.on; radios.append(t.el);
+        }
+      } catch (e) { radioNote.textContent = e.message; }
+    }
+    // wallpaper
+    const wpStyle = h("select", { class: "nd-input", title: "how the picture fills the screen" });
+    for (const s of ["fill", "fit", "stretch", "center", "span"]) wpStyle.append(h("option", { value: s, text: s }));
+    wpStyle.value = store.get("wpstyle", "fill"); wpStyle.addEventListener("change", () => store.set("wpstyle", wpStyle.value));
+    const wpNote = h("span", { class: "nd-dim nd-path", text: "span stretches one picture across both screens" });
+    const wpBtn = btn("choose picture", async () => {
+      try { const r = await api("wallpaper", wpStyle.value); if (r && r.ok) { wpNote.textContent = r.file; log("wallpaper set"); } else if (r) log("wallpaper: " + r.msg); } catch (e) { log("wallpaper: " + e.message); }
+    });
+    // drives
+    const drives = h("div", { class: "nd-kv" });
+    async function loadDrives() {
+      try {
+        const list = await api("drives"); drives.textContent = "";
+        for (const d of list) {
+          const id = "dr-" + String(d.root).replace(/\W/g, "");
+          drives.append(h("div", { class: "nd-mix" }, h("div", { class: "nd-meter", "data-meter": id }, h("div", null, "drive " + String(d.root).replace(/[\\/]+$/, ""), h("output")), h("div", { class: "nd-meterbar" }, h("i"))),
+            btn("open", () => api("openDrive", d.root).catch(e => log("could not open the drive: " + e.message)))));
+          panel.setMeter(id, (d.total - d.free) / d.total * 100, gb(d.free) + " GB free of " + Math.round(d.total / 1073741824) + " GB");
+        }
+      } catch (e) { drives.textContent = e.message; }
+    }
+    // more cleanup
+    const more = h("div", { class: "nd-kv" }), moreConfirm = h("div", { class: "nd-row" });
+    async function scanMore() {
+      more.textContent = ""; moreConfirm.textContent = ""; more.append(h("span", { class: "nd-dim", text: "scanning..." }));
+      try {
+        const r = await api("cleanCats"); more.textContent = "";
+        if (!r.length) more.append(h("span", { class: "nd-dim", text: "only available on Windows" }));
+        for (const c of r) more.append(h("div", { class: "nd-info" }, h("span", { text: c.label + (c.admin ? " *" : "") }), h("span", { class: "nd-row nd-ipcopy" },
+          h("output", { text: c.bytes ? size(c.bytes) : "empty" }),
+          c.bytes ? btn("clear", () => {
+            moreConfirm.textContent = "";
+            moreConfirm.append(h("span", { text: "delete " + size(c.bytes) + " of " + c.label + "? " + (c.note || "") }), btn("yes, delete", async () => {
+              moreConfirm.textContent = "";
+              try { const x = await api("cleanCat", c.id); log(c.label + ": freed " + size(x.freed) + (x.kept ? ", " + x.kept + " in use kept" : "") + (x.msg ? " - " + x.msg : "")); } catch (e) { log(c.label + ": " + e.message); }
+              scanMore();
+            }, "nd-danger"), btn("cancel", () => { moreConfirm.textContent = ""; }));
+          }) : null)));
+      } catch (e) { more.textContent = e.message; }
+    }
+    // windows settings pages
+    const links = [["display", "display"], ["sound", "sound"], ["bluetooth", "bluetooth"], ["apps", "apps"], ["update", "windows update"], ["storage", "storage"],
+      ["nightlight", "night light"], ["notifications", "notifications"], ["power", "power"], ["devices", "device manager"], ["taskmgr", "task manager"], ["control", "control panel"]];
+    const linkRow = h("div", { class: "nd-row" }, links.map(([k, l]) => btn(l, () => api("openSetting", k).catch(e => log("could not open " + l + ": " + e.message)))));
+    // nightdeck window and data
+    const onTop = toggle("always on top", on => setS("onTop", on, "always on top " + (on ? "on" : "off")));
+    const startTray = toggle("start hidden in the tray (needs the tray icon)", on => setS("startTray", on, "start hidden " + (on ? "on" : "off")));
+    const opa = slider("window opacity"); opa.inp.min = "50";
+    const setOpa = v => { opa.set(v); opa.inp.style.setProperty("--p", ((v - 50) * 2) + "%"); };
+    opa.inp.addEventListener("input", () => opa.inp.style.setProperty("--p", ((opa.inp.value - 50) * 2) + "%"));
+    opa.inp.addEventListener("change", () => setS("opacity", Number(opa.inp.value) / 100, "window opacity " + opa.inp.value + "%"));
+    const nConfirm = h("div", { class: "nd-row" });
+    const bBackup = btn("back up nightdeck", async () => {
+      const data = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith("ndu-")) data[k] = localStorage.getItem(k); }
+      try { const f = await api("backupSave", data); if (f) log("backup saved: " + f); } catch (e) { log("backup failed: " + e.message); }
+    });
+    const bRestore = btn("restore from backup", () => {
+      nConfirm.textContent = "";
+      nConfirm.append(h("span", { text: "replace all nightdeck data and settings with a backup? nightdeck restarts afterwards." }), btn("yes, choose file", async () => {
+        nConfirm.textContent = "";
+        try {
+          const local = await api("backupLoad"); if (!local) return;
+          for (const k of Object.keys(localStorage)) if (k.startsWith("ndu-")) localStorage.removeItem(k);
+          for (const k in local) localStorage.setItem(k, local[k]);
+          log("backup restored - restarting"); setTimeout(() => api("appRestart").catch(() => {}), 500);
+        } catch (e) { log("restore failed: " + e.message); }
+      }, "nd-danger"), btn("cancel", () => { nConfirm.textContent = ""; }));
+    });
+
     root.append(
-      h("div", { class: "nd-sub", text: "sound and screen" }), h("div", { class: "nd-two" }, h("div", { class: "nd-kv" }, vol.el, mute.el), h("div", { class: "nd-kv" }, bri.el)),
+      h("div", { class: "nd-sub", text: "sound and screen" }), h("div", { class: "nd-two" }, h("div", { class: "nd-kv" }, vol.el, mute.el), h("div", { class: "nd-kv" }, bri.el, night.el)),
+      h("div", { class: "nd-row" }, h("span", { class: "nd-dim nd-lab", text: "output" }), outSel), h("div", { class: "nd-row" }, h("span", { class: "nd-dim nd-lab", text: "input" }), inSel, mic.el), micNote,
+      h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "volume per program" }), btn("refresh", loadMixer)), mixer,
       h("div", { class: "nd-sub", text: "windows" }), h("div", { class: "nd-grid2" }, Object.values(sw).map(t => t.el)),
-      h("span", { class: "nd-dim", text: "file settings show in folders you open next, or after pressing F5 in an open folder." }),
+      h("span", { class: "nd-dim", text: "file settings show in folders you open next, or after pressing F5. notification banners may need a sign-out to switch fully." }),
+      h("div", { class: "nd-sub", text: "wi-fi and bluetooth" }), radios, radioNote,
+      h("div", { class: "nd-sub", text: "wallpaper" }), h("div", { class: "nd-row" }, wpStyle, wpBtn), wpNote,
+      h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "drives" }), btn("refresh", loadDrives), btn("open storage settings", () => api("openSetting", "storage").catch(e => log(e.message)))), drives,
       h("div", { class: "nd-sub", text: "cleanup" }), h("div", { class: "nd-kv" }, row("temporary files", cTemp), row("recycle bin", cBin)),
       h("div", { class: "nd-row" }, btn("scan", scan), clearTemp, clearBin), cConfirm,
-      h("div", { class: "nd-sub", text: "nightdeck" }), h("div", { class: "nd-grid2" }, tray.el, login.el, hot.el),
-      h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "hotkey keys" }), accel, setAccel, hkNote));
+      h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "more cleanup" }), btn("scan", scanMore), h("span", { class: "nd-dim", text: "* needs windows permission" })), more, moreConfirm,
+      h("div", { class: "nd-sub", text: "windows settings" }), linkRow,
+      h("div", { class: "nd-sub", text: "nightdeck" }), h("div", { class: "nd-grid2" }, tray.el, login.el, hot.el, onTop.el, startTray.el),
+      h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "hotkey keys" }), accel, setAccel, hkNote),
+      h("div", { class: "nd-kv" }, opa.el), h("div", { class: "nd-row" }, bBackup, bRestore), nConfirm);
 
     let loaded = false;
     async function load() {
       api("settingsGet").then(showSettings).catch(() => {});
+      loadDevices(); loadMixer(); loadDrives();
       if (loaded) return; loaded = true;
+      loadRadios();
+      api("nightLight", null).then(r => { if (r.ok) night.inp.checked = r.on; else { night.inp.disabled = true; night.el.title = r.msg; } }).catch(() => {});
       api("volume", null, null).then(r => { if (r.ok) { vol.set(r.level); mute.inp.checked = r.mute; } else vol.note(r.msg); }).catch(e => vol.note(e.message));
       api("brightness", null).then(r => { if (r.ok) bri.set(r.level); else { bri.note("not supported"); bri.inp.disabled = true; } }).catch(e => bri.note(e.message));
       api("switchesGet").then(r => { if (r.ok) for (const id in sw) sw[id].inp.checked = !!r[id]; }).catch(() => {});

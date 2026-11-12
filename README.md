@@ -4,7 +4,7 @@ A dark control-panel style PC utility for Windows, built with Electron. One wind
 
 ![Network tab](docs/screenshots/network.png)
 
-Current version: **v2.41**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
+Current version: **v2.42**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
 
 ## What it does
 
@@ -20,7 +20,7 @@ Current version: **v2.41**. The full history is in [CHANGELOG.txt](CHANGELOG.txt
 | timers | Several countdowns with presets, alarms, stopwatch with laps, pomodoro, repeating finish sound |
 | capture | Screenshots of a screen, all screens, a window or a region, with delay, clipboard copy, mark-up editor, hotkey, recent list, and screen recording |
 | tools | Standard, scientific, graphing and programmer calculators with history and memory, multi-function graphing with zoom, date calculation, percent and VAT, unit price comparison, password generator, text tools, a converter with 13 categories and favourites, colour picker with screen picking and palette |
-| control | Volume, brightness, Windows switches (dark mode, file extensions, hidden files), cleanup, tray icon, global hotkey, start with Windows |
+| control | Volume, sound devices and per-program volume, brightness, night light, Windows switches, Wi-Fi and Bluetooth, wallpaper, drives, cleanup, Windows settings shortcuts, and Nightdeck options with backup and restore |
 | BETA | Empty, reserved for experiments |
 
 Bars are blue up to 50%, red above 50% and gold at 100%.

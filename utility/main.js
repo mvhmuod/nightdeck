@@ -38,7 +38,7 @@ function sync() {
 }
 
 function createWindows() {
-  const startHidden = process.argv.includes("--startup") && settings.tray;
+  const startHidden = (process.argv.includes("--startup") || settings.startTray) && settings.tray;
   const web = { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true };
   let start = pairStart(), size = { width: MW, height: MH }, showConsole = true;
   try {
@@ -57,6 +57,7 @@ function createWindows() {
     backgroundColor: "#15191d", title: "Nightdeck Utility Console", webPreferences: web
   });
   Menu.setApplicationMenu(null);
+  applyWin();
   main.loadFile(path.join(__dirname, "index.html"));
   con.loadFile(path.join(__dirname, "console.html"));
 
@@ -861,20 +862,36 @@ const SWITCHES = {
   appsDark: { key: HKCU + "Themes\\Personalize", name: "AppsUseLightTheme", on: 0, off: 1 },
   sysDark: { key: HKCU + "Themes\\Personalize", name: "SystemUsesLightTheme", on: 0, off: 1 },
   showExt: { key: HKCU + "Explorer\\Advanced", name: "HideFileExt", on: 0, off: 1 },
-  showHidden: { key: HKCU + "Explorer\\Advanced", name: "Hidden", on: 1, off: 2 }
+  showHidden: { key: HKCU + "Explorer\\Advanced", name: "Hidden", on: 1, off: 2 },
+  transparency: { key: HKCU + "Themes\\Personalize", name: "EnableTransparency", on: 1, off: 0, dflt: true },
+  toasts: { key: HKCU + "PushNotifications", name: "ToastEnabled", on: 1, off: 0, dflt: true }
 };
+async function iconsShown() {
+  const r = await run("reg.exe", ["query", HKCU + "Explorer\\Advanced", "/v", "HideIcons"]), m = /REG_DWORD\s+0x([0-9a-f]+)/i.exec(r.out);
+  return !(m && parseInt(m[1], 16) === 1);
+}
 async function switchesGet() {
   if (!WIN) return { ok: false, msg: "only available on Windows" };
   const out = { ok: true };
   for (const id in SWITCHES) {
     const sw = SWITCHES[id], r = await run("reg.exe", ["query", sw.key, "/v", sw.name]);
     const m = /REG_DWORD\s+0x([0-9a-f]+)/i.exec(r.out);
-    out[id] = m ? parseInt(m[1], 16) === sw.on : false;
+    out[id] = m ? parseInt(m[1], 16) === sw.on : !!sw.dflt;
   }
+  out.icons = await iconsShown();
+  const a = await psCtl("'nd:' + [NdC.Ctl]::AutoHide(-1)"), m = /nd:(\d)/.exec(a.out); out.autoHide = !!(m && m[1] === "1");
   return out;
 }
 async function switchSet(id, on) {
   if (!WIN) return { ok: false, msg: "only available on Windows" };
+  if (id === "icons") {
+    if ((await iconsShown()) !== !!on) { const r = await psCtl("'nd:' + [NdC.Ctl]::ToggleIcons()"); if (!/nd:True/i.test(r.out)) return { ok: false, msg: "the desktop did not answer" }; }
+    return { ok: true, msg: "" };
+  }
+  if (id === "autoHide") {
+    const r = await psCtl("'nd:' + [NdC.Ctl]::AutoHide(" + (on ? 1 : 0) + ")"), m = /nd:(\d)/.exec(r.out);
+    return m && (m[1] === "1") === !!on ? { ok: true, msg: "" } : { ok: false, msg: "windows did not accept the change" };
+  }
   const sw = SWITCHES[id]; if (!sw) return { ok: false, msg: "unknown switch" };
   const r = await run("reg.exe", ["add", sw.key, "/v", sw.name, "/t", "REG_DWORD", "/d", String(on ? sw.on : sw.off), "/f"]);
   return { ok: r.ok, msg: r.ok ? "" : r.err.trim().split(/\r?\n/)[0] };
@@ -963,15 +980,299 @@ function applyHotkey() {
   globalShortcut.unregisterAll(); hotkeyOk = false; setTimeout(() => { registerCapKey(); registerLaunchKeys(); }, 0); // the shortcut hotkeys are put back right after
   if (settings.hotkey && ACCEL.test(settings.accel)) { try { hotkeyOk = globalShortcut.register(settings.accel, toggleAll); } catch (e) { hotkeyOk = false; } }
 }
+// ---- Control extras: audio devices, volume per program, night light, desktop, radios, wallpaper, cleanup, backup ----
+// The C# helper is compiled once into the app's data folder and reused (a new version gets a new file name).
+const CTL_CS = String.raw`using System; using System.Text; using System.Runtime.InteropServices;
+namespace NdC {
+[StructLayout(LayoutKind.Sequential)] public struct PK { public Guid f; public int p; }
+[StructLayout(LayoutKind.Sequential)] public struct PV { public ushort vt; public ushort a, b, c; public IntPtr p; public IntPtr q; }
+[ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IPS { [PreserveSig] int GetCount(out int c); [PreserveSig] int GetAt(int i, out PK k); [PreserveSig] int GetValue(ref PK k, out PV v); }
+[ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IDev { [PreserveSig] int Activate(ref Guid iid, int ctx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); [PreserveSig] int OpenPropertyStore(int acc, out IPS ps); [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id); [PreserveSig] int GetState(out int s); }
+[ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IDevCol { [PreserveSig] int GetCount(out int c); [PreserveSig] int Item(int i, out IDev d); }
+[ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IEnum { [PreserveSig] int EnumAudioEndpoints(int flow, int mask, out IDevCol c); [PreserveSig] int GetDefaultAudioEndpoint(int flow, int role, out IDev d); }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class EnumObj { }
+[ComImport, Guid("F8679F50-850A-41CF-9C72-430F290290C8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IPolicy { [PreserveSig] int a(); [PreserveSig] int b(); [PreserveSig] int c(); [PreserveSig] int d(); [PreserveSig] int e(); [PreserveSig] int f(); [PreserveSig] int g(); [PreserveSig] int h(); [PreserveSig] int i(); [PreserveSig] int j();
+  [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string id, int role); }
+[ComImport, Guid("870AF99C-171D-4F9E-AF0D-E63DF40C2BC9")] class PolicyObj { }
+[ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IEpVol { [PreserveSig] int a(); [PreserveSig] int b(); [PreserveSig] int c(); [PreserveSig] int d(); [PreserveSig] int SetMasterVolumeLevelScalar(float l, ref Guid g); [PreserveSig] int e();
+  [PreserveSig] int GetMasterVolumeLevelScalar(out float l); [PreserveSig] int f(); [PreserveSig] int g(); [PreserveSig] int h(); [PreserveSig] int i();
+  [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool m, ref Guid g); [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool m); }
+[ComImport, Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISesMgr2 { [PreserveSig] int a(); [PreserveSig] int b(); [PreserveSig] int GetSessionEnumerator(out ISesEnum e); }
+[ComImport, Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISesEnum { [PreserveSig] int GetCount(out int c); [PreserveSig] int GetSession(int i, out ISesCtl2 s); }
+[ComImport, Guid("BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISesCtl2 { [PreserveSig] int GetState(out int s); [PreserveSig] int a(); [PreserveSig] int b(); [PreserveSig] int c(); [PreserveSig] int d(); [PreserveSig] int e(); [PreserveSig] int f(); [PreserveSig] int g(); [PreserveSig] int h();
+  [PreserveSig] int i(); [PreserveSig] int j(); [PreserveSig] int GetProcessId(out uint pid); [PreserveSig] int IsSystemSoundsSession(); }
+[ComImport, Guid("87CE5498-68D6-44E5-9215-6F4BAB6A8B0E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISimpleVol { [PreserveSig] int SetMasterVolume(float l, ref Guid g); [PreserveSig] int GetMasterVolume(out float l); [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool m, ref Guid g); [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool m); }
+
+public static class Ctl {
+  static IEnum En() { return (IEnum)(new EnumObj()); }
+  static string Name(IDev d) {
+    IPS ps; if (d.OpenPropertyStore(0, out ps) != 0 || ps == null) return "?";
+    var k = new PK(); k.f = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"); k.p = 14; PV v;
+    if (ps.GetValue(ref k, out v) != 0 || v.vt != 31 || v.p == IntPtr.Zero) return "?";
+    return Marshal.PtrToStringUni(v.p);
+  }
+  // one line per active device: default flag, id, name
+  public static string Devices(int flow) {
+    var sb = new StringBuilder(); var en = En(); IDev def; string defId = "";
+    if (en.GetDefaultAudioEndpoint(flow, 1, out def) == 0 && def != null) def.GetId(out defId);
+    IDevCol col; if (en.EnumAudioEndpoints(flow, 1, out col) != 0 || col == null) return "";
+    int n; col.GetCount(out n);
+    for (int i = 0; i < n; i++) { IDev d; if (col.Item(i, out d) != 0 || d == null) continue; string id; d.GetId(out id); sb.Append((id == defId ? "1" : "0") + "\t" + id + "\t" + Name(d).Replace("\t", " ") + "\n"); }
+    return sb.ToString();
+  }
+  public static string SetDefault(string id) { var p = (IPolicy)(new PolicyObj()); for (int r = 0; r < 3; r++) { int hr = p.SetDefaultEndpoint(id, r); if (hr != 0) return "nd:err " + hr; } return "nd:ok"; }
+  static IEpVol Ep(int flow) {
+    IDev d; Marshal.ThrowExceptionForHR(En().GetDefaultAudioEndpoint(flow, 1, out d)); object o; var iid = typeof(IEpVol).GUID;
+    Marshal.ThrowExceptionForHR(d.Activate(ref iid, 23, IntPtr.Zero, out o)); return (IEpVol)o;
+  }
+  // microphone mute: set 1 or 0, -1 to only read; returns -1 when there is no microphone
+  public static int MicMute(int set) {
+    try { var v = Ep(1); var g = Guid.Empty; if (set >= 0) Marshal.ThrowExceptionForHR(v.SetMute(set == 1, ref g)); bool m; v.GetMute(out m); return m ? 1 : 0; }
+    catch (Exception) { return -1; }
+  }
+  // one line per program playing sound: pid, name, volume 0-100, mute. pidSet >= 0 changes that program first
+  public static string Sessions(int pidSet, float vol, int mute) {
+    IDev d; Marshal.ThrowExceptionForHR(En().GetDefaultAudioEndpoint(0, 1, out d)); object o; var iid = typeof(ISesMgr2).GUID;
+    Marshal.ThrowExceptionForHR(d.Activate(ref iid, 23, IntPtr.Zero, out o)); var mgr = (ISesMgr2)o; ISesEnum se;
+    Marshal.ThrowExceptionForHR(mgr.GetSessionEnumerator(out se));
+    int n; se.GetCount(out n); var sb = new StringBuilder(); var g = Guid.Empty;
+    for (int i = 0; i < n; i++) {
+      ISesCtl2 c; if (se.GetSession(i, out c) != 0 || c == null) continue;
+      int st; c.GetState(out st); if (st == 2) continue; // expired
+      uint pid; c.GetProcessId(out pid); var sv = (ISimpleVol)c;
+      if (pidSet >= 0 && pid == (uint)pidSet) { if (vol >= 0) sv.SetMasterVolume(Math.Min(1f, vol), ref g); if (mute >= 0) sv.SetMute(mute == 1, ref g); }
+      float lv; sv.GetMasterVolume(out lv); bool mu; sv.GetMute(out mu);
+      string name = "system sounds";
+      if (c.IsSystemSoundsSession() != 0) { try { name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch (Exception) { name = "program " + pid; } }
+      sb.Append(pid + "\t" + name + "\t" + Math.Round(lv * 100) + "\t" + (mu ? 1 : 0) + "\n");
+    }
+    return sb.ToString();
+  }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string c, string w);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr p, IntPtr a, string c, string w);
+  [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  // shows or hides the desktop icons, as the desktop's own menu does
+  public static bool ToggleIcons() {
+    IntPtr v = FindWindowEx(FindWindow("Progman", null), IntPtr.Zero, "SHELLDLL_DefView", null);
+    if (v == IntPtr.Zero) { IntPtr w = IntPtr.Zero; while ((w = FindWindowEx(IntPtr.Zero, w, "WorkerW", null)) != IntPtr.Zero) { v = FindWindowEx(w, IntPtr.Zero, "SHELLDLL_DefView", null); if (v != IntPtr.Zero) break; } }
+    if (v == IntPtr.Zero) return false;
+    SendMessage(v, 0x111, (IntPtr)0x7402, IntPtr.Zero); return true;
+  }
+  [StructLayout(LayoutKind.Sequential)] struct ABD { public int cb; public IntPtr h; public uint msg; public uint edge; public int l, t, r, b; public IntPtr lp; }
+  [DllImport("shell32.dll")] static extern IntPtr SHAppBarMessage(uint m, ref ABD d);
+  // taskbar auto-hide: set 1 or 0, -1 to only read
+  public static int AutoHide(int set) {
+    var d = new ABD(); d.cb = Marshal.SizeOf(typeof(ABD)); d.h = FindWindow("Shell_TrayWnd", null);
+    if (set >= 0) { d.lp = (IntPtr)(set == 1 ? 1 : 2); SHAppBarMessage(10, ref d); }
+    return (((long)SHAppBarMessage(4, ref d)) & 1) != 0 ? 1 : 0;
+  }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool SystemParametersInfo(uint a, uint b, string c, uint d);
+  public static bool Wall(string p) { return SystemParametersInfo(20, 0, p, 3); }
+}
+}
+`;
+const ctlDll = () => path.join(app.getPath("userData"), "ndctl-" + require("crypto").createHash("md5").update(CTL_CS).digest("hex").slice(0, 8) + ".dll");
+function psCtl(script, timeout) {
+  const dll = ctlDll().replace(/'/g, "''");
+  return ps("$dll='" + dll + "'; if (-not (Test-Path -LiteralPath $dll)) { Add-Type -TypeDefinition @'\n" + CTL_CS + "\n'@ -OutputAssembly $dll -OutputType Library }; Add-Type -LiteralPath $dll;" + script, timeout || 40000);
+}
+const firstLine = t => String(t || "").trim().split(/\r?\n/)[0];
+async function audioDevices() {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const r = await psCtl("[NdC.Ctl]::Devices(0) + '@@' + [NdC.Ctl]::Devices(1) + '@@' + [NdC.Ctl]::MicMute(-1)");
+  const parts = r.out.split("@@"); if (parts.length < 3) return { ok: false, msg: "the sound devices could not be read" + (r.err ? " - " + firstLine(r.err) : "") };
+  const parse = t => t.split(/\r?\n/).map(l => l.split("\t")).filter(a => a.length >= 3).map(a => ({ def: a[0] === "1", id: a[1], name: a[2] }));
+  return { ok: true, out: parse(parts[0]), in: parse(parts[1]), micMute: /^\s*1/.test(parts[2]), mic: !/^\s*-1/.test(parts[2]) };
+}
+async function audioDefault(id) {
+  id = String(id); if (!WIN) return { ok: false, msg: "only available on Windows" };
+  if (!/^[\w.{}\-#]{5,200}$/.test(id)) return { ok: false, msg: "unknown device" };
+  const r = await psCtl("[NdC.Ctl]::SetDefault('" + id + "')");
+  return /nd:ok/.test(r.out) ? { ok: true } : { ok: false, msg: "windows did not accept the change" };
+}
+async function micMute(on) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const r = await psCtl("'nd:' + [NdC.Ctl]::MicMute(" + (on === true ? 1 : on === false ? 0 : -1) + ")"), m = /nd:(-?\d)/.exec(r.out);
+  if (!m || m[1] === "-1") return { ok: false, msg: "no microphone found" };
+  return { ok: true, mute: m[1] === "1" };
+}
+function parseSessions(out) {
+  const by = new Map();
+  for (const l of out.split(/\r?\n/)) {
+    const a = l.split("\t"); if (a.length < 4 || !/^\d+$/.test(a[0])) continue;
+    if (!by.has(a[0])) by.set(a[0], { pid: Number(a[0]), name: a[1], vol: Number(a[2]) || 0, mute: a[3] === "1" });
+  }
+  return [...by.values()].sort((x, y) => x.name.localeCompare(y.name));
+}
+async function appVolumes() {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const r = await psCtl("[NdC.Ctl]::Sessions(-1, -1, -1)");
+  if (r.err && !r.out.trim()) return { ok: false, msg: "the sound programs could not be read - " + firstLine(r.err) };
+  return { ok: true, list: parseSessions(r.out) };
+}
+async function appVolume(pid, vol, mute) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  pid = Number(pid); if (!Number.isInteger(pid) || pid < 0) return { ok: false, msg: "unknown program" };
+  const v = vol == null ? -1 : Math.max(0, Math.min(100, Math.round(Number(vol)))) / 100, m = mute === true ? 1 : mute === false ? 0 : -1;
+  const r = await psCtl("[NdC.Ctl]::Sessions(" + pid + ", " + v + ", " + m + ")"), it = parseSessions(r.out).find(x => x.pid === pid);
+  return it ? { ok: true, vol: it.vol, mute: it.mute } : { ok: false, msg: "that program is not playing sound any more" };
+}
+// Night light is stored by Windows in one registry value; byte 18 says on (0x15) or off (0x13).
+async function nightLight(set) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const s = "$set=" + (set === true ? 1 : set === false ? 0 : -1) + ";" +
+    "$k='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.data.bluelightreduction.bluelightreductionstate\\windows.data.bluelightreduction.bluelightreductionstate';" +
+    "try { $d=[byte[]](Get-ItemProperty -LiteralPath $k -Name Data -ErrorAction Stop).Data } catch { 'nd:none'; exit };" +
+    "if ($d.Length -lt 26) { 'nd:none'; exit }; $on = $d[18] -eq 0x15;" +
+    "if ($set -ge 0 -and ([bool]$set) -ne $on) {" +
+    " if ($on) { $n = [byte[]]($d[0..22] + $d[25..($d.Length-1)]); $n[18] = 0x13 } else { $n = [byte[]]($d[0..22] + [byte[]](0x10,0x00) + $d[23..($d.Length-1)]); $n[18] = 0x15 };" +
+    " for ($i = 10; $i -lt 15; $i++) { if ($n[$i] -ne 0xff) { $n[$i]++; break } };" +
+    " Set-ItemProperty -LiteralPath $k -Name Data -Value $n -Type Binary; $on = -not $on };" +
+    "'nd:' + [int]$on";
+  const r = await ps(s), m = /nd:(\w+)/.exec(r.out);
+  if (!m || m[1] === "none") return { ok: false, msg: "night light has not been set up on this pc yet - open its windows settings once" };
+  return { ok: true, on: m[1] === "1" };
+}
+const RADIO_PS = "Add-Type -AssemblyName System.Runtime.WindowsRuntime;" +
+  "$at = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0];" +
+  "function W($op, $t) { $x = $at.MakeGenericMethod($t).Invoke($null, @($op)); $x.Wait(-1) | Out-Null; $x.Result };" +
+  "[Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null;" +
+  "[Windows.Devices.Radios.RadioAccessStatus,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null;" +
+  "[Windows.Devices.Radios.RadioState,Windows.System.Devices,ContentType=WindowsRuntime] | Out-Null;" +
+  "W ([Windows.Devices.Radios.Radio]::RequestAccessAsync()) ([Windows.Devices.Radios.RadioAccessStatus]) | Out-Null;" +
+  "function L { W ([Windows.Devices.Radios.Radio]::GetRadiosAsync()) ([System.Collections.Generic.IReadOnlyList[Windows.Devices.Radios.Radio]]) };";
+async function radios(kind, on) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  let s = RADIO_PS;
+  if (kind) {
+    if (kind !== "WiFi" && kind !== "Bluetooth") return { ok: false, msg: "unknown radio" };
+    s += "foreach ($r in (L)) { if ([string]$r.Kind -eq '" + kind + "') { $res = W ($r.SetStateAsync([Windows.Devices.Radios.RadioState]::" + (on ? "On" : "Off") + ")) ([Windows.Devices.Radios.RadioAccessStatus]); 'nd:set;' + $res } };";
+  }
+  s += "foreach ($r in (L)) { 'nd:' + $r.Kind + ';' + $r.State + ';' + $r.Name }";
+  const r = await ps(s, 30000), list = [];
+  for (const m of r.out.matchAll(/nd:(WiFi|Bluetooth);(\w+);(.*)/g)) list.push({ kind: m[1], on: m[2] === "On", name: m[3].trim() });
+  if (kind) { const m = /nd:set;(\w+)/.exec(r.out); if (!m || m[1] !== "Allowed") return { ok: false, msg: m ? "windows answered " + m[1] : "the radio did not answer", list }; }
+  return { ok: true, list };
+}
+const WP_STYLE = { fill: "10", fit: "6", stretch: "2", center: "0", span: "22" };
+async function wallpaper(style) {
+  if (!WIN) return { ok: false, msg: "only available on Windows" };
+  const st = WP_STYLE[style] || "10";
+  const r = await dialog.showOpenDialog(main, { properties: ["openFile"], defaultPath: app.getPath("pictures"), filters: [{ name: "Pictures", extensions: ["jpg", "jpeg", "png", "bmp"] }] });
+  if (r.canceled || !r.filePaths.length) return null;
+  const f = r.filePaths[0];
+  await run("reg.exe", ["add", "HKCU\\Control Panel\\Desktop", "/v", "WallpaperStyle", "/t", "REG_SZ", "/d", st, "/f"]);
+  await run("reg.exe", ["add", "HKCU\\Control Panel\\Desktop", "/v", "TileWallpaper", "/t", "REG_SZ", "/d", "0", "/f"]);
+  const x = await psCtl("'nd:' + [NdC.Ctl]::Wall('" + f.replace(/'/g, "''") + "')");
+  return /nd:True/i.test(x.out) ? { ok: true, file: f } : { ok: false, msg: "windows did not accept that picture" };
+}
+// more cleanup: places that only hold caches or crash reports
+function cleanDefs() {
+  if (!WIN) return [];
+  const L = process.env.LOCALAPPDATA || "", W = process.env.SystemRoot || "C:\\Windows";
+  const sub = (base, names) => { const out = []; try { for (const d of fs.readdirSync(base, { withFileTypes: true })) if (d.isDirectory()) for (const n of names) out.push(path.join(base, d.name, n)); } catch (e) {} return out; };
+  return [
+    { id: "update", label: "windows update downloads", dirs: [path.join(W, "SoftwareDistribution", "Download")], admin: true, note: "windows asks for permission." },
+    { id: "thumbs", label: "thumbnail cache", dirs: [path.join(L, "Microsoft", "Windows", "Explorer")], match: /^thumbcache_.*\.db$/i, note: "files in use are kept; thumbnails are made again when needed." },
+    { id: "dumps", label: "crash dumps", dirs: [path.join(L, "CrashDumps"), path.join(W, "Minidump")], files: [path.join(W, "MEMORY.DMP")], admin: true, note: "system dumps need windows permission." },
+    { id: "chrome", label: "chrome cache", dirs: sub(path.join(L, "Google", "Chrome", "User Data"), ["Cache", "Code Cache", "GPUCache"]), note: "close chrome first for the best result." },
+    { id: "edge", label: "edge cache", dirs: sub(path.join(L, "Microsoft", "Edge", "User Data"), ["Cache", "Code Cache", "GPUCache"]), note: "close edge first for the best result." },
+    { id: "firefox", label: "firefox cache", dirs: sub(path.join(L, "Mozilla", "Firefox", "Profiles"), ["cache2"]), note: "close firefox first for the best result." }
+  ];
+}
+async function catSize(c) {
+  let bytes = 0; const until = Date.now() + 8000;
+  for (const d of c.dirs) {
+    if (c.match) { try { for (const f of await fs.promises.readdir(d)) if (c.match.test(f)) { try { bytes += (await fs.promises.stat(path.join(d, f))).size; } catch (e) {} } } catch (e) {} }
+    else if (fs.existsSync(d)) bytes += (await treeSize(d, { max: 200000, until })).bytes;
+  }
+  for (const f of c.files || []) { try { bytes += (await fs.promises.stat(f)).size; } catch (e) {} }
+  return bytes;
+}
+async function cleanCats() { const out = []; for (const c of cleanDefs()) out.push({ id: c.id, label: c.label, admin: !!c.admin, note: c.note, bytes: await catSize(c) }); return out; }
+async function cleanCat(id) {
+  const c = cleanDefs().find(x => x.id === id); if (!c) throw new Error("unknown cleanup");
+  const before = await catSize(c); let kept = 0; const denied = [];
+  const gone = async p => { try { await fs.promises.rm(p, { recursive: true, force: true, maxRetries: 0 }); } catch (e) { if (/EPERM|EACCES/.test(e.code) && c.admin) return false; kept++; } return true; };
+  for (const d of c.dirs) {
+    let items; try { items = await fs.promises.readdir(d); } catch (e) { if (/EPERM|EACCES/.test(e.code) && c.admin) denied.push(d); continue; }
+    let refused = false;
+    for (const f of items) if (!c.match || c.match.test(f)) { if (!(await gone(path.join(d, f)))) refused = true; }
+    if (refused) denied.push(d);
+  }
+  for (const f of c.files || []) if (fs.existsSync(f) && !(await gone(f))) denied.push(f);
+  let msg = "";
+  if (denied.length) { // ask Windows to do the rest with administrator rights
+    const q = s => "'" + s.replace(/'/g, "''") + "'";
+    const cmd = denied.map(p => c.files && c.files.includes(p) ? "Remove-Item -LiteralPath " + q(p) + " -Force -ErrorAction SilentlyContinue"
+      : "Get-ChildItem -LiteralPath " + q(p) + " -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue").join("; ");
+    const enc = Buffer.from(cmd, "utf16le").toString("base64");
+    const r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "try { Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-EncodedCommand','" + enc + "'; exit 0 } catch { exit 1223 }"], 180000);
+    if (!r.ok) msg = "the windows permission was declined, so some files were left";
+  }
+  const after = await catSize(c);
+  return { freed: Math.max(0, before - after), kept, msg };
+}
+function openDrive(root) { root = String(root); if (!/^[A-Z]:\\$/.test(root) && root !== "/") throw new Error("unknown drive"); return shell.openPath(root).then(e => { if (e) throw new Error(e); return true; }); }
+const SETTING_LINKS = { display: "ms-settings:display", sound: "ms-settings:sound", bluetooth: "ms-settings:bluetooth", apps: "ms-settings:appsfeatures",
+  update: "ms-settings:windowsupdate", storage: "ms-settings:storagesense", nightlight: "ms-settings:nightlight", notifications: "ms-settings:notifications", power: "ms-settings:powersleep" };
+async function openSetting(k) {
+  if (!WIN) throw new Error("only available on Windows");
+  const W = process.env.SystemRoot || "C:\\Windows";
+  if (SETTING_LINKS[k]) { await shell.openExternal(SETTING_LINKS[k]); return true; }
+  if (k === "devices") { const e = await shell.openPath(path.join(W, "System32", "devmgmt.msc")); if (e) throw new Error(e); return true; }
+  if (k === "taskmgr" || k === "control") { spawn(path.join(W, "System32", k === "taskmgr" ? "Taskmgr.exe" : "control.exe"), [], { detached: true, stdio: "ignore" }).unref(); return true; }
+  throw new Error("unknown settings page");
+}
+// backup of everything Nightdeck keeps: the window's own storage plus the settings files
+const BK_FILES = ["settings.json", "clipboard.json", "capture.json"];
+async function backupSave(local) {
+  if (!local || typeof local !== "object") throw new Error("nothing to back up");
+  const files = {}; for (const f of BK_FILES) { try { files[f] = fs.readFileSync(path.join(app.getPath("userData"), f), "utf8"); } catch (e) {} }
+  const n = new Date(), p = x => String(x).padStart(2, "0");
+  const r = await dialog.showSaveDialog(main, { defaultPath: path.join(app.getPath("documents"), "nightdeck-backup-" + n.getFullYear() + p(n.getMonth() + 1) + p(n.getDate()) + ".json"), filters: [{ name: "Nightdeck backup", extensions: ["json"] }] });
+  if (r.canceled || !r.filePath) return null;
+  fs.writeFileSync(r.filePath, JSON.stringify({ app: "nightdeck-backup", version: 1, made: n.toISOString(), local, files }));
+  return r.filePath;
+}
+async function backupLoad() {
+  const r = await dialog.showOpenDialog(main, { properties: ["openFile"], defaultPath: app.getPath("documents"), filters: [{ name: "Nightdeck backup", extensions: ["json"] }] });
+  if (r.canceled || !r.filePaths.length) return null;
+  if (fs.statSync(r.filePaths[0]).size > 50 * 1048576) throw new Error("that file is too large");
+  let j; try { j = JSON.parse(fs.readFileSync(r.filePaths[0], "utf8")); } catch (e) { throw new Error("that is not a nightdeck backup"); }
+  if (!j || j.app !== "nightdeck-backup" || !j.local || typeof j.local !== "object") throw new Error("that is not a nightdeck backup");
+  const local = {}; for (const k in j.local) if (/^ndu-.{1,80}$/.test(k) && typeof j.local[k] === "string") local[k] = j.local[k];
+  for (const f of BK_FILES) if (j.files && typeof j.files[f] === "string") { try { JSON.parse(j.files[f]); fs.writeFileSync(path.join(app.getPath("userData"), f), j.files[f]); } catch (e) {} }
+  return local;
+}
+function appRestart() { quitting = true; app.relaunch({ args: process.argv.slice(1).filter(a => a !== "--startup") }); setTimeout(() => app.quit(), 300); return true; }
+function applyWin() {
+  for (const w of [main, con]) if (w && !w.isDestroyed()) { try { w.setAlwaysOnTop(!!settings.onTop); w.setOpacity(Math.max(0.5, Math.min(1, Number(settings.opacity) || 1))); } catch (e) {} }
+}
+
 const LOGIN_ARGS = ["--startup"];
 function settingsGet() {
   let login = false; try { login = app.getLoginItemSettings({ args: LOGIN_ARGS }).openAtLogin; } catch (e) {}
-  return { tray: settings.tray, trayOk: !settings.tray || !!tray, hotkey: settings.hotkey, hotkeyOk, accel: settings.accel, login };
+  return { tray: settings.tray, trayOk: !settings.tray || !!tray, hotkey: settings.hotkey, hotkeyOk, accel: settings.accel, login, onTop: !!settings.onTop, startTray: !!settings.startTray, opacity: Number(settings.opacity) || 1 };
 }
 function settingSet(key, value) {
   if (key === "tray") { settings.tray = !!value; applyTray(); }
   else if (key === "hotkey") { settings.hotkey = !!value; applyHotkey(); }
   else if (key === "accel") { value = String(value).trim(); if (!ACCEL.test(value)) throw new Error("use a combination like Control+Alt+N"); settings.accel = value; applyHotkey(); }
+  else if (key === "onTop") { settings.onTop = !!value; applyWin(); }
+  else if (key === "startTray") { settings.startTray = !!value; }
+  else if (key === "opacity") { const v = Number(value); if (!(v >= 0.5 && v <= 1)) throw new Error("opacity must be 50 to 100%"); settings.opacity = v; applyWin(); }
   else if (key === "login") { app.setLoginItemSettings({ openAtLogin: !!value, args: LOGIN_ARGS }); }
   else throw new Error("unknown setting");
   saveSettings();
@@ -1178,6 +1479,8 @@ const API = {
   },
   temps: readTemps,
   rates: currencyRates,
+  audioDevices, audioDefault, micMute, appVolumes, appVolume, nightLight, radios: () => radios(), radioSet: (k, on) => radios(String(k), !!on),
+  wallpaper, cleanCats, cleanCat, drives: () => listDisks(), openDrive, openSetting, backupSave, backupLoad, appRestart,
   volume, brightness, switchesGet, switchSet, cleanScan, cleanTemp, cleanBin, settingsGet, settingSet,
   procs: listProcs,
   startupList, startupSet, showFile,

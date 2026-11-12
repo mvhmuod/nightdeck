@@ -177,6 +177,9 @@ input[type=time].nd-input,input[type=number].nd-input{color-scheme:dark}
 .nd-hitem span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#aeb7be}
 .nd-hitem:hover span,.nd-hitem:hover output{color:#4fc3d9}
 .nd-pal{gap:6px}
+/* control tab */
+.nd-mix{display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:end}
+.nd-lab{width:44px}
 .nd-mem .nd-btn{padding:2px 9px}
 .nd-graph{cursor:crosshair; -webkit-app-region:no-drag}
 .nd-pw{font-family:"IBM Plex Mono",ui-monospace,monospace; word-break:break-all; user-select:all}
