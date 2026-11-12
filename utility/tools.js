@@ -1250,6 +1250,18 @@
     }
     function keep(q, r) { hist = [{ q, r }].concat(hist.filter(x => x.q !== q)).slice(0, 30); store.set("calchist", hist); drawHist(); }
     const clearHist = () => { hist = []; store.set("calchist", hist); drawHist(); };
+    // memory keys for standard and scientific (the stored number stays after a restart)
+    let mem = Number(store.get("calcmem", 0)) || 0; const memOuts = [];
+    function drawMem() { for (const o of memOuts) o.textContent = mem ? "memory = " + show(mem) : "memory empty"; }
+    function memRow(c) {
+      const o = h("span", { class: "nd-dim" }); memOuts.push(o);
+      const cur = () => { const r = c.out.textContent.slice(2); return isNum(r) ? parseFloat(r) : null; };
+      const set = v => { mem = v; store.set("calcmem", mem); drawMem(); };
+      return h("div", { class: "nd-row nd-mem" },
+        btn("MC", () => set(0)),
+        btn("MR", () => { const t = "(" + show(mem) + ")", a = c.inp.selectionStart == null ? c.inp.value.length : c.inp.selectionStart; c.inp.value = c.inp.value.slice(0, a) + t + c.inp.value.slice(c.inp.selectionEnd == null ? a : c.inp.selectionEnd); c.inp.focus(); c.run(); }),
+        btn("M+", () => { const v = cur(); if (v != null) set(mem + v); }), btn("M-", () => { const v = cur(); if (v != null) set(mem - v); }), o);
+    }
 
     // ---- expression parser (no eval). Decimals: 1.5 or 1,5. Two-value functions use ";" ----
     function evaluate(src, opt) {
@@ -1299,7 +1311,7 @@
     }
 
     // ---- sub-menu ----
-    const modes = ["standard", "scientific", "graphing", "programmer", "date", "percent", "converter", "colour"];
+    const modes = ["standard", "scientific", "graphing", "programmer", "date", "percent", "unit price", "password", "text", "converter", "colour"];
     const sections = {}, buttons = {}, onShow = {};
     const nav = h("div", { class: "nd-row nd-modes" });
     root.append(nav);
@@ -1324,7 +1336,7 @@
       return { inp, out, run, cp, box };
     }
     const std = calcRow("e.g. (12,5 + 3) * 4", () => ({}), "calc");
-    section("standard", h("div", { class: "nd-row" }, std.inp, std.out, std.cp),
+    section("standard", h("div", { class: "nd-row" }, std.inp, std.out, std.cp), memRow(std),
       h("span", { class: "nd-dim", text: "+  -  *  /  %  ^  ( )   -   type on the keyboard, Enter keeps the result in the history, Escape clears" }),
       h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "history" }), btn("clear history", clearHist)), std.box);
     onShow.standard = () => { drawHist(); std.inp.focus(); };
@@ -1337,43 +1349,76 @@
     const fnRow = h("div", { class: "nd-row nd-fns" });
     for (const f of ["sin(", "cos(", "tan(", "asin(", "acos(", "atan(", "sqrt(", "cbrt(", "ln(", "log(", "exp(", "abs(", "pi", "e", "^", "!", "(", ")"])
       fnRow.append(btn(f, () => { const a = sci.inp.selectionStart == null ? sci.inp.value.length : sci.inp.selectionStart; sci.inp.value = sci.inp.value.slice(0, a) + f + sci.inp.value.slice(sci.inp.selectionEnd == null ? a : sci.inp.selectionEnd); sci.inp.focus(); sci.inp.selectionStart = sci.inp.selectionEnd = a + f.length; sci.run(); }));
-    section("scientific", h("div", { class: "nd-row" }, sci.inp, sci.out, sci.cp), h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "angles in" }), degBtn), fnRow,
+    section("scientific", h("div", { class: "nd-row" }, sci.inp, sci.out, sci.cp), memRow(sci), h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "angles in" }), degBtn), fnRow,
       h("span", { class: "nd-dim", text: "also: sinh cosh tanh log2 floor ceil round, and root(27;3) pow(2;8) mod(7;3) min(a;b) max(a;b)" }),
       h("div", { class: "nd-sub", text: "history" }), sci.box);
     onShow.scientific = () => { drawHist(); sci.inp.focus(); };
-    drawHist();
+    drawHist(); drawMem();
 
-    // ---- graphing ----
-    const gIn = h("input", { class: "nd-input nd-grow", value: store.get("graph", "sin(x) * x"), spellcheck: "false" });
-    const gMin = h("input", { class: "nd-input", value: "-10", size: "5" }), gMax = h("input", { class: "nd-input", value: "10", size: "5" });
+    // ---- graphing: up to four functions, scroll to zoom, drag to move, hover to read values ----
+    const GCOL = ["#4fc3d9", "#9bd64a", "#ffd34d", "#ff6b6b"];
+    let gSaved = store.get("graphs", null); if (!Array.isArray(gSaved)) gSaved = [store.get("graph", "sin(x) * x"), "", "", ""];
+    const gIns = GCOL.map((c, k) => { const el = h("input", { class: "nd-input nd-grow", value: gSaved[k] || "", placeholder: k ? "another function (optional)" : "e.g. x^2 - 3", spellcheck: "false" }); el.style.borderLeft = "3px solid " + c; return el; });
+    const gMin = h("input", { class: "nd-input", value: store.get("gmin", "-10"), size: "8" }), gMax = h("input", { class: "nd-input", value: store.get("gmax", "10"), size: "8" });
     const gMsg = h("span", { class: "nd-dim" }), cv = h("canvas", { class: "nd-graph" });
+    let hoverX = null, gDrag = null;
     function step(range) { const raw = range / 8, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p; return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p; }
+    const gRange = () => { const a = num(gMin.value), b = num(gMax.value); return isFinite(a) && isFinite(b) && a < b ? [a, b] : null; };
+    function setRange(a, b) { const f = v => String(+v.toPrecision(4)); gMin.value = f(a); gMax.value = f(b); draw(); }
     function draw() {
       const w = cv.clientWidth, hh = cv.clientHeight; if (!w || !hh) return;
       const dpr = window.devicePixelRatio || 1; cv.width = Math.round(w * dpr); cv.height = Math.round(hh * dpr);
       const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, hh);
-      const x0 = num(gMin.value), x1 = num(gMax.value);
-      if (!isFinite(x0) || !isFinite(x1) || x0 >= x1) { gMsg.textContent = "check the x range"; return; }
-      const pts = [];
-      try { for (let p = 0; p <= w; p++) { const y = evaluate(gIn.value, { vars: { x: x0 + (x1 - x0) * p / w } }); pts.push(y != null && isFinite(y) ? y : null); } }
-      catch (e) { gMsg.textContent = "cannot read that formula - use x, e.g. x^2 - 3"; return; }
-      const fin = pts.filter(v => v != null).sort((a, b) => a - b);
-      if (!fin.length) { gMsg.textContent = "nothing to draw in this range"; return; }
+      const r = gRange(); if (!r) { gMsg.textContent = "check the x range"; return; }
+      const [x0, x1] = r; store.set("gmin", gMin.value); store.set("gmax", gMax.value);
+      store.set("graphs", gIns.map(i => i.value)); store.set("graph", gIns[0].value);
+      const series = []; let bad = false;
+      gIns.forEach((inp, k) => {
+        const f = inp.value.trim(); if (!f) return;
+        try { const pts = []; for (let p = 0; p <= w; p++) { const y = evaluate(f, { vars: { x: x0 + (x1 - x0) * p / w } }); pts.push(y != null && isFinite(y) ? y : null); } series.push({ k, f, pts }); }
+        catch (e) { bad = true; }
+      });
+      const fin = series.flatMap(s => s.pts.filter(v => v != null)).sort((a, b) => a - b);
+      if (!fin.length) { gMsg.textContent = bad ? "cannot read a formula - use x, e.g. x^2 - 3" : "nothing to draw in this range"; return; }
       let y0 = fin[Math.floor(fin.length * 0.02)], y1 = fin[Math.max(0, Math.ceil(fin.length * 0.98) - 1)];
       if (y0 === y1) { y0 -= 1; y1 += 1; } const pad = (y1 - y0) * 0.1; y0 -= pad; y1 += pad;
       const X = x => (x - x0) / (x1 - x0) * w, Y = y => hh - (y - y0) / (y1 - y0) * hh;
       g.font = '10px "IBM Plex Mono", monospace'; g.lineWidth = 1;
       const sx = step(x1 - x0), sy = step(y1 - y0), lab = v => String(+v.toPrecision(6));
-      for (let x = Math.ceil(x0 / sx) * sx; x <= x1; x += sx) { g.strokeStyle = Math.abs(x) < sx / 2 ? "#7d8891" : "#232a30"; g.beginPath(); g.moveTo(X(x), 0); g.lineTo(X(x), hh); g.stroke(); g.fillStyle = "#7d8891"; g.fillText(lab(x), X(x) + 3, hh - 4); }
-      for (let y = Math.ceil(y0 / sy) * sy; y <= y1; y += sy) { g.strokeStyle = Math.abs(y) < sy / 2 ? "#7d8891" : "#232a30"; g.beginPath(); g.moveTo(0, Y(y)); g.lineTo(w, Y(y)); g.stroke(); g.fillStyle = "#7d8891"; g.fillText(lab(y), 3, Y(y) - 3); }
-      g.strokeStyle = "#4fc3d9"; g.lineWidth = 2; g.beginPath(); let pen = false, last = 0;
-      pts.forEach((y, p) => { if (y == null) { pen = false; return; } const py = Y(y); if (pen && Math.abs(py - last) > hh) pen = false; if (pen) g.lineTo(p, py); else g.moveTo(p, py); pen = true; last = py; });
-      g.stroke(); gMsg.textContent = "y = " + gIn.value; store.set("graph", gIn.value);
+      for (let x = Math.ceil(x0 / sx) * sx; x <= x1; x += sx) { g.strokeStyle = Math.abs(x) < sx / 2 ? "#7d8891" : "#232a30"; g.beginPath(); g.moveTo(X(x), 0); g.lineTo(X(x), hh); g.stroke(); g.fillStyle = "#7d8891"; g.fillText(lab(Math.abs(x) < sx / 2 ? 0 : x), X(x) + 3, hh - 4); }
+      for (let y = Math.ceil(y0 / sy) * sy; y <= y1; y += sy) { g.strokeStyle = Math.abs(y) < sy / 2 ? "#7d8891" : "#232a30"; g.beginPath(); g.moveTo(0, Y(y)); g.lineTo(w, Y(y)); g.stroke(); g.fillStyle = "#7d8891"; g.fillText(lab(Math.abs(y) < sy / 2 ? 0 : y), 3, Y(y) - 3); }
+      for (const s of series) {
+        g.strokeStyle = GCOL[s.k]; g.lineWidth = 2; g.beginPath(); let pen = false, last = 0;
+        s.pts.forEach((y, p) => { if (y == null) { pen = false; return; } const py = Y(y); if (pen && Math.abs(py - last) > hh) pen = false; if (pen) g.lineTo(p, py); else g.moveTo(p, py); pen = true; last = py; });
+        g.stroke();
+      }
+      if (hoverX == null) { gMsg.textContent = (bad ? "one formula cannot be read.  " : "") + "scroll to zoom, drag to move, point at the graph to read values"; return; }
+      const xv = x0 + (x1 - x0) * hoverX / w, parts = ["x = " + lab(xv)];
+      g.strokeStyle = "#dfe6ea"; g.setLineDash([3, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(hoverX, 0); g.lineTo(hoverX, hh); g.stroke(); g.setLineDash([]);
+      for (const s of series) {
+        let y = null; try { y = evaluate(s.f, { vars: { x: xv } }); } catch (e) {}
+        parts.push("f" + (s.k + 1) + " = " + (y != null && isFinite(y) ? lab(y) : "-"));
+        if (y != null && isFinite(y) && y >= y0 && y <= y1) { g.fillStyle = GCOL[s.k]; g.beginPath(); g.arc(hoverX, Y(y), 4, 0, 2 * Math.PI); g.fill(); }
+      }
+      gMsg.textContent = parts.join("    ");
     }
-    for (const e of [gIn, gMin, gMax]) e.addEventListener("input", draw);
+    for (const e of gIns.concat([gMin, gMax])) e.addEventListener("input", draw);
+    cv.addEventListener("mousemove", e => {
+      if (gDrag) { const r = gDrag.r, d = (e.clientX - gDrag.x) / cv.clientWidth * (r[1] - r[0]); setRange(r[0] - d, r[1] - d); return; }
+      hoverX = e.offsetX; draw();
+    });
+    cv.addEventListener("mouseleave", () => { hoverX = null; draw(); });
+    cv.addEventListener("mousedown", e => { const r = gRange(); if (r) { gDrag = { x: e.clientX, r }; hoverX = null; } });
+    window.addEventListener("mouseup", () => { gDrag = null; });
+    cv.addEventListener("wheel", e => {
+      e.preventDefault(); const r = gRange(); if (!r) return;
+      const f = e.deltaY > 0 ? 1.25 : 0.8, cx = r[0] + (r[1] - r[0]) * e.offsetX / cv.clientWidth;
+      setRange(cx - (cx - r[0]) * f, cx + (r[1] - cx) * f);
+    }, { passive: false });
     if (window.ResizeObserver) new ResizeObserver(draw).observe(cv);
     onShow.graphing = draw;
-    section("graphing", h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "y =" }), gIn, h("span", { class: "nd-dim", text: "x from" }), gMin, h("span", { class: "nd-dim", text: "to" }), gMax), cv, gMsg);
+    section("graphing", h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "y =" }), gIns[0]), h("div", { class: "nd-row" }, gIns[1], gIns[2], gIns[3]),
+      h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "x from" }), gMin, h("span", { class: "nd-dim", text: "to" }), gMax, btn("reset view", () => setRange(-10, 10))), cv, gMsg);
 
     // ---- programmer (whole numbers, any size) ----
     function evalInt(src) {
@@ -1457,6 +1502,80 @@
       h("div", { class: "nd-sub", text: "discount" }),
       pctRow(["price", "@p6=50", "minus", "@d6=20", "%"], v => money(v.p6 * (1 - v.d6 / 100)) + "   (you save " + money(v.p6 * v.d6 / 100) + ")"));
     onShow.percent = () => pctRuns.forEach(r => r());
+
+    // ---- unit price comparison ----
+    const UP = { g: ["kg", 0.001], kg: ["kg", 1], ml: ["litre", 0.001], l: ["litre", 1], piece: ["piece", 1] };
+    const upRows = [], upOut = h("div", { class: "nd-kv" });
+    function upCalc() {
+      upOut.textContent = "";
+      const res = upRows.map(r => { const p = num(r.pr.value), s = num(r.sz.value), u = UP[r.un.value]; store.set("up" + r.k, { n: r.nm.value, p: r.pr.value, s: r.sz.value, u: r.un.value }); return p > 0 && s > 0 ? { n: r.nm.value.trim() || "product " + (r.k + 1), base: u[0], per: p / (s * u[1]) } : null; }).filter(Boolean);
+      if (!res.length) { upOut.append(h("span", { class: "nd-dim", text: "enter a price and a size for at least one product" })); return; }
+      const bases = [...new Set(res.map(r => r.base))];
+      for (const b of bases) {
+        const grp = res.filter(r => r.base === b), best = grp.reduce((a, r) => r.per < a.per ? r : a);
+        for (const r of grp) upOut.append(h("div", { class: "nd-info" + (grp.length > 1 && r === best ? " nd-best" : "") }, h("span", { text: r.n }),
+          h("output", { text: money(r.per) + " per " + b + (grp.length < 2 ? "" : r === best ? "   cheapest" : "   " + s6((r.per / best.per - 1) * 100) + "% more") })));
+      }
+      if (bases.length > 1) upOut.append(h("span", { class: "nd-dim", text: "weight, volume and pieces are compared separately" }));
+    }
+    function upRow(k) {
+      const st = store.get("up" + k, {}) || {};
+      const nm = h("input", { class: "nd-input", size: "14", placeholder: "product " + (k + 1), value: st.n || "" });
+      const pr = h("input", { class: "nd-input", size: "7", placeholder: "price", value: st.p || "" }), sz = h("input", { class: "nd-input", size: "7", placeholder: "size", value: st.s || "" });
+      const un = h("select", { class: "nd-input" }); for (const u of Object.keys(UP)) un.append(h("option", { value: u, text: u })); un.value = UP[st.u] ? st.u : "g";
+      for (const e of [nm, pr, sz, un]) e.addEventListener("input", upCalc);
+      upRows.push({ k, nm, pr, sz, un });
+      return h("div", { class: "nd-row" }, nm, pr, h("span", { class: "nd-dim", text: "for" }), sz, un);
+    }
+    section("unit price", h("div", { class: "nd-sub", text: "which is cheaper?" }), upRow(0), upRow(1), upRow(2), upOut,
+      btn("clear", () => { for (const r of upRows) { r.nm.value = r.pr.value = r.sz.value = ""; } upCalc(); }));
+    onShow["unit price"] = upCalc;
+
+    // ---- password generator (made on this PC, nothing is stored) ----
+    const pwSet = { lower: "abcdefghijklmnopqrstuvwxyz", upper: "ABCDEFGHIJKLMNOPQRSTUVWXYZ", digits: "0123456789", symbols: "!@#$%^&*()-_=+[]{};:,.?/" };
+    const pwOpt = { lower: true, upper: true, digits: true, symbols: true, similar: false };
+    const pwLen = h("input", { class: "nd-input", type: "number", min: "6", max: "128", value: "20", size: "5" });
+    const pwOut = h("output", { class: "nd-result nd-pw" }), pwStr = h("span", { class: "nd-dim" });
+    function rnd(n) { const a = new Uint32Array(1), lim = Math.floor(0x100000000 / n) * n; do crypto.getRandomValues(a); while (a[0] >= lim); return a[0] % n; }
+    function genPw() {
+      const len = Math.max(6, Math.min(128, Math.round(num(pwLen.value)) || 20));
+      const sets = Object.keys(pwSet).filter(k => pwOpt[k]).map(k => pwOpt.similar ? pwSet[k].replace(/[Il1O0o|]/g, "") : pwSet[k]);
+      if (!sets.length) { pwOut.textContent = "pick at least one kind of character"; pwStr.textContent = ""; return; }
+      const all = sets.join(""), ch = sets.map(s => s[rnd(s.length)]); // at least one of each chosen kind
+      while (ch.length < len) ch.push(all[rnd(all.length)]);
+      for (let i = ch.length - 1; i > 0; i--) { const j = rnd(i + 1); [ch[i], ch[j]] = [ch[j], ch[i]]; }
+      pwOut.textContent = ch.join("");
+      const bits = Math.round(len * Math.log2(all.length));
+      pwStr.textContent = "strength: " + (bits < 50 ? "weak" : bits < 80 ? "fair" : bits < 110 ? "strong" : "very strong") + "  (" + bits + " bits)";
+    }
+    pwLen.addEventListener("input", genPw);
+    const pwBtns = [["lower", "a-z"], ["upper", "A-Z"], ["digits", "0-9"], ["symbols", "!@#"], ["similar", "no look-alikes"]].map(([k, label]) => {
+      const b = btn(label, () => { pwOpt[k] = !pwOpt[k]; b.classList.toggle("nd-on", pwOpt[k]); genPw(); }); b.classList.toggle("nd-on", pwOpt[k]); return b;
+    });
+    section("password", h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "length" }), pwLen, pwBtns), pwOut,
+      h("div", { class: "nd-row" }, btn("new password", genPw, "nd-on"), btn("copy", () => { if (pwOut.textContent.length >= 6 && !/ /.test(pwOut.textContent)) api("copyText", pwOut.textContent).then(() => log("password copied")).catch(e => log("copy failed: " + e.message)); }), pwStr),
+      h("span", { class: "nd-dim", text: "made with a secure random source on this pc. nothing is saved, and the password is not written to the console." }));
+    onShow.password = () => { if (!pwOut.textContent) genPw(); };
+
+    // ---- text tools ----
+    const tx = h("textarea", { class: "nd-input nd-txt", placeholder: "paste or type text here", spellcheck: "false" }), txInfo = h("span", { class: "nd-dim" });
+    let txPrev = null;
+    const txCount = () => { const t = tx.value; txInfo.textContent = t.length + " characters, " + (t.trim().match(/\S+/g) || []).length + " words, " + (t ? t.split("\n").length : 0) + " lines"; };
+    tx.addEventListener("input", txCount);
+    const change = f => () => { try { const v = f(tx.value); txPrev = tx.value; tx.value = v; } catch (e) { log("text tools: that text cannot be decoded"); } txCount(); };
+    const byLine = f => change(t => f(t.split(/\r?\n/)).join("\n"));
+    const b64e = t => { let s = ""; for (const x of new TextEncoder().encode(t)) s += String.fromCharCode(x); return btoa(s); };
+    const b64d = t => new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(t.replace(/\s+/g, "")), c => c.charCodeAt(0)));
+    section("text", tx, txInfo,
+      h("div", { class: "nd-row" }, btn("UPPER", change(t => t.toUpperCase())), btn("lower", change(t => t.toLowerCase())), btn("Title Case", change(t => t.toLowerCase().replace(/(^|[\s(\-"])(\S)/g, (m, a, b) => a + b.toUpperCase()))),
+        btn("trim lines", byLine(a => a.map(l => l.trim()))), btn("remove empty lines", byLine(a => a.filter(l => l.trim())))),
+      h("div", { class: "nd-row" }, btn("remove duplicates", byLine(a => [...new Set(a)])), btn("sort A-Z", byLine(a => a.slice().sort((x, y) => x.localeCompare(y)))), btn("reverse lines", byLine(a => a.slice().reverse()))),
+      h("div", { class: "nd-row" }, btn("base64 encode", change(b64e)), btn("base64 decode", change(b64d)), btn("url encode", change(encodeURIComponent)), btn("url decode", change(decodeURIComponent))),
+      h("div", { class: "nd-row" }, btn("undo", () => { if (txPrev != null) { tx.value = txPrev; txPrev = null; txCount(); } }),
+        btn("copy", () => { if (tx.value) api("copyText", tx.value).then(() => log("text copied (" + tx.value.length + " characters)")).catch(e => log("copy failed: " + e.message)); }),
+        btn("clear", () => { txPrev = tx.value; tx.value = ""; txCount(); }, "nd-danger")));
+    onShow.text = txCount;
+
 
     // ---- converter ----
     const U = {

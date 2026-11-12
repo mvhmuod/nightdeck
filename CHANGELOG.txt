@@ -213,6 +213,17 @@ v2.40  Tools tab, first part
        - New "percent" page: % of, what %, change, VAT (19% / 7%),
          discount.
        - Colour: pick from screen, HEX / RGB / HSL with copy, palette.
+v2.41  Tools tab, second part
+       - Memory keys MC, MR, M+, M- on standard and scientific.
+       - Graphing: up to four functions in colours, scroll to zoom,
+         drag to move, point at the graph to read the values.
+       - New "unit price" page: which product is cheaper per kg, litre
+         or piece.
+       - New "password" page: length, character kinds, no look-alikes,
+         strength; nothing is saved or logged.
+       - New "text" page: counts, upper/lower/title case, trim, remove
+         empty or duplicate lines, sort, reverse, Base64 and URL
+         encode/decode, undo, copy.
        >> Current version.
 
 
