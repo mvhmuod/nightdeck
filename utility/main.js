@@ -1319,7 +1319,7 @@ function applyWin() {
 // ---- BETA: feature switches, profiles, game mode, gpu details, overlay, screens, command search, schedule, alerts, usage time ----
 // Everything is kept in beta.json next to the other settings. Background work only runs while its switch is on.
 const betaFile = () => path.join(app.getPath("userData"), "beta.json");
-const BETA_ON = { profiles: true, game: true, gpu: true, overlay: false, monitors: true, palette: true, schedule: true, alerts: false, usage: false };
+const BETA_ON = { profiles: true, game: true, gpu: true, overlay: false, monitors: true, palette: true, schedule: true, alerts: false, usage: false, remote: false };
 let beta = { on: Object.assign({}, BETA_ON), profiles: {}, game: { apps: [], force: false, active: null, hiPlan: "" }, corner: "tr", palKey: "Control+Alt+P",
   sched: [], alerts: { cpu: 80, memGb: 4, mins: 3 }, alertLog: [], usage: {}, usagePath: {} };
 let smiExe = null, palReg = "", palOk = false, betaDirty = false;
@@ -1334,12 +1334,13 @@ const cleanName = n => { n = String(n || "").replace(/[\r\n\t]+/g, " ").trim().s
 const procName = n => String(n || "").trim().replace(/\.exe$/i, "");
 function betaGet() {
   return { on: beta.on, profiles: profList(), game: { apps: beta.game.apps, force: !!beta.game.force, active: !!beta.game.active, since: beta.game.active ? beta.game.active.t : 0 },
-    corner: beta.corner, palKey: beta.palKey, palOk, sched: beta.sched, alerts: beta.alerts, alertLog: beta.alertLog };
+    corner: beta.corner, remoteUntil: beta.remoteUntil || 0, remoteDir: remoteDir(), palKey: beta.palKey, palOk, sched: beta.sched, alerts: beta.alerts, alertLog: beta.alertLog };
 }
 function betaSet(key, v) {
   if (key === "feat") {
     if (!v || !Object.prototype.hasOwnProperty.call(BETA_ON, v.id)) throw new Error("unknown feature");
     beta.on[v.id] = !!v.on;
+    if (v.id === "remote") beta.remoteUntil = v.on ? Date.now() + REMOTE_MS : 0;
   } else if (key === "corner") { if (!["tl", "tr", "bl", "br"].includes(v)) throw new Error("unknown corner"); beta.corner = v; }
   else if (key === "palKey") { v = String(v).trim(); if (!ACCEL.test(v)) throw new Error("use a combination like Control+Alt+P"); beta.palKey = v; beta.palKeyUser = true; }
   else if (key === "gameApps") { beta.game.apps = [].concat(v || []).map(procName).filter(n => /^[\w .+\-()]{1,80}$/.test(n) && !isProtected(n)).slice(0, 40); }
@@ -1354,7 +1355,7 @@ function betaSet(key, v) {
   saveBeta(); betaApply();
   return betaGet();
 }
-function betaApply() { overlayApply(); registerPalKey(); watchApply(); }
+function betaApply() { overlayApply(); registerPalKey(); watchApply(); remoteApply(); }
 
 // profiles: a saved set of power plan, volume, sound output, night light and a few windows switches
 const PROF_SW = ["appsDark", "sysDark", "transparency", "toasts"];
@@ -1637,6 +1638,78 @@ function betaInit() {
   setInterval(schedTick, 15000);
   setInterval(() => { if (betaDirty) saveBeta(); }, 60000);
   if (main) main.on("closed", () => { if (ovWin && !ovWin.isDestroyed()) ovWin.destroy(); });
+}
+
+// ---- BETA: remote control for Claude ----
+// While switched on, Nightdeck reads request files from the "remote" folder next to Nightdeck.exe,
+// runs them, and writes the answers back. Only the actions listed below can be used: reading values
+// and changes that can be undone. Nothing here starts programs, ends programs, deletes files or shuts down.
+// It switches itself off after one hour.
+const REMOTE_READ = ["sys", "temps", "sysExtra", "procs", "net", "netcheck", "ping", "netRate", "netDetails", "powerPlans", "settingsGet",
+  "switchesGet", "audioDevices", "appVolumes", "drives", "startupList", "cleanScan", "cleanCats", "betaGet", "gpuStats", "usageGet", "installedApps"];
+const REMOTE_SET = ["volume", "brightness", "powerPlan", "keepAwake", "nightLight", "appVolume", "audioDefault", "micMute", "switchSet", "radioSet", "monitors", "profApply"];
+const REMOTE_MS = 3600 * 1000;
+let remoteT = null, remoteBusy = false;
+const remoteDir = () => path.join(path.dirname(process.execPath), "remote");
+function remoteStatus() {
+  try {
+    fs.mkdirSync(remoteDir(), { recursive: true });
+    fs.writeFileSync(path.join(remoteDir(), "status.json"), JSON.stringify({ on: !!beta.on.remote, until: beta.remoteUntil || 0, version: "nightdeck-remote 1",
+      read: REMOTE_READ, set: REMOTE_SET, ui: ["ui.read <tab>", "ui.log"], t: Date.now() }, null, 1));
+  } catch (e) {}
+}
+function remoteApply() {
+  if (beta.on.remote && !(beta.remoteUntil > Date.now())) { beta.on.remote = false; saveBeta(); pushLog("remote control switched itself off"); }
+  remoteStatus();
+  if (!beta.on.remote) { clearInterval(remoteT); remoteT = null; return; }
+  if (!remoteT) remoteT = setInterval(remoteTick, 500);
+}
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error("took longer than " + ms / 1000 + " s")), ms))]);
+async function remoteUi(name, args) {
+  if (name === "ui.log") return history.slice(-Math.max(1, Math.min(200, Number(args[0]) || 50))).map(m => m.t + " " + m.text);
+  const tab = String(args[0] || ""); if (!/^[a-z]{2,20}$/.test(tab)) throw new Error("unknown tab");
+  if (!main || main.isDestroyed()) throw new Error("the window is closed");
+  const wait = Math.max(200, Math.min(15000, Number(args[1]) || 2500));
+  return main.webContents.executeJavaScript("new Promise(function(ok){var p=document.querySelector('[data-pane=\"" + tab + "\"]');if(!p){ok(null);return}panel.select('" + tab +
+    "');setTimeout(function(){ok(p.innerText)}," + wait + ")})");
+}
+async function remoteCall(c) {
+  const name = String(c && c.name || ""), args = Array.isArray(c && c.args) ? c.args.slice(0, 5) : [];
+  if (name.startsWith("ui.")) { if (name !== "ui.read" && name !== "ui.log") throw new Error("unknown ui action"); return remoteUi(name, args); }
+  if (!REMOTE_READ.includes(name) && !REMOTE_SET.includes(name)) throw new Error("not allowed: " + name);
+  if (REMOTE_SET.includes(name)) pushLog("remote: " + name + " " + JSON.stringify(args).slice(0, 80));
+  return API[name](...args);
+}
+async function remoteTick() {
+  if (remoteBusy) return;
+  if (!(beta.remoteUntil > Date.now())) { remoteApply(); return; }
+  let all; try { all = fs.readdirSync(remoteDir()); } catch (e) { return; }
+  for (const f of all) if (/^res-[\w-]{1,40}\.json$/.test(f)) { try { const p = path.join(remoteDir(), f); if (Date.now() - fs.statSync(p).mtimeMs > 600000) fs.unlinkSync(p); } catch (e) {} } // old answers
+  const files = all.filter(f => /^req-[\w-]{1,40}\.json$/.test(f)).sort();
+  if (!files.length) return;
+  remoteBusy = true;
+  try {
+    for (const f of files.slice(0, 5)) {
+      const file = path.join(remoteDir(), f), id = f.slice(4, -5); let req = null, out;
+      try { req = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { if (Date.now() - fs.statSync(file).mtimeMs < 3000) continue; } // may still be written
+      try { fs.unlinkSync(file); } catch (e) {}
+      if (!req) out = { id, error: "the request is not valid json" };
+      else {
+        const calls = [].concat(req.calls || []).slice(0, 30), results = [];
+        for (const c of calls) {
+          const t = Date.now();
+          try { results.push({ name: c.name, ok: true, ms: 0, value: await withTimeout(Promise.resolve(remoteCall(c)), 45000) }); }
+          catch (e) { results.push({ name: c && c.name, ok: false, error: String(e && e.message || e) }); }
+          results[results.length - 1].ms = Date.now() - t;
+        }
+        out = { id, t: Date.now(), results };
+      }
+      const tmp = path.join(remoteDir(), "res-" + id + ".tmp");
+      fs.writeFileSync(tmp, JSON.stringify(out, (k, v) => typeof v === "string" && v.startsWith("data:image") ? "(picture)" : v, 1));
+      fs.renameSync(tmp, path.join(remoteDir(), "res-" + id + ".json"));
+    }
+  } catch (e) { pushLog("remote: " + e.message); }
+  remoteBusy = false;
 }
 
 const LOGIN_ARGS = ["--startup"];

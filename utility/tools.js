@@ -1935,7 +1935,7 @@
 
     // 1. feature switches
     const FEATS = [["profiles", "profiles"], ["game", "game mode"], ["gpu", "gpu details"], ["overlay", "overlay on screen"], ["monitors", "screens"],
-      ["palette", "command search"], ["schedule", "scheduled actions"], ["alerts", "heavy program alerts"], ["usage", "usage time"]];
+      ["palette", "command search"], ["schedule", "scheduled actions"], ["alerts", "heavy program alerts"], ["usage", "usage time"], ["remote", "remote control for claude"]];
     const feat = {}, sec = {};
     for (const [id, label] of FEATS) feat[id] = toggle(label, on => set("feat", { id, on }, label + " " + (on ? "on" : "off")).then(() => { if (on) loadSec(id); }));
 
@@ -2179,6 +2179,16 @@
     });
     sec.usage = h("div", { class: "nd-bsec" }, h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "usage time" }), bToday, bWeek, btn("refresh", loadUsage), bReset, uTotal), uNote, uList);
 
+    // 11. remote control for claude
+    const rState = note(""), rDir = h("span", { class: "nd-dim nd-pw", text: "" });
+    sec.remote = h("div", { class: "nd-bsec" }, h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "remote control for claude" }), rState,
+      btn("one more hour", () => set("feat", { id: "remote", on: true }, "remote control on for one more hour"))),
+      note("lets claude read nightdeck's values and change settings that can be undone, by putting small request files in this folder. it cannot start or close programs, delete files or shut down. every change is written in the console. it switches itself off after one hour."), rDir);
+    function drawRemote() {
+      rState.textContent = cfg.on.remote && cfg.remoteUntil ? "on until " + new Date(cfg.remoteUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "off";
+      rDir.textContent = cfg.remoteDir || "";
+    }
+
     root.append(sub("features"), h("div", { class: "nd-grid2", "data-nopal": "1" }, FEATS.map(([id]) => feat[id].el)),
       note("these are test features. switch off what you do not use - background ones only run while switched on."),
       ...FEATS.map(([id]) => sec[id]));
@@ -2186,7 +2196,7 @@
     function show() {
       if (!cfg) return;
       for (const [id] of FEATS) { feat[id].inp.checked = !!cfg.on[id]; sec[id].style.display = cfg.on[id] ? "" : "none"; }
-      drawProfiles(); drawGame(); drawSched(); drawAlerts(); fillActs();
+      drawProfiles(); drawGame(); drawSched(); drawAlerts(); fillActs(); drawRemote();
       oCorner.value = cfg.corner; if (document.activeElement !== kIn) kIn.value = cfg.palKey;
       kNote.textContent = cfg.on.palette && !cfg.palOk ? "windows did not accept this hotkey - another program may use it" : "";
     }

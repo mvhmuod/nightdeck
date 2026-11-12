@@ -274,6 +274,14 @@ v2.47  Fixed: the tools tab showed every tool at once (a style name
 v2.48  Small fixes: a new profile now shows right away even when a
        feature switch is changed at the same time; profile and game
        mode messages are no longer written twice in the console.
+v2.49  BETA: remote control for Claude
+       - New switch. While on, Nightdeck answers request files in the
+         "remote" folder next to Nightdeck.exe: reading values from
+         every tab and changing settings that can be undone (volume,
+         brightness, power plan, night light, switches, profiles).
+       - It cannot start or close programs, delete files or shut down.
+       - Every change shows in the console; it switches itself off
+         after one hour.
        >> Current version.
 
 
