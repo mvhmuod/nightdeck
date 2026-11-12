@@ -114,7 +114,7 @@ ipcMain.on("nd-window", (event, action) => {
     }
     // The app's core files changed: only a restart can load those.
     try { fs.writeFileSync(stateFile(), JSON.stringify({ bounds: main.getBounds(), console: con && !con.isDestroyed() && con.isVisible() })); } catch (e) {}
-    app.relaunch();
+    app.relaunch({ args: process.argv.slice(1).filter(a => a !== "--startup") }); // not hidden in the tray after an update
     app.exit(0);
   } else if (action === "resetSize") {
     restore = null;
@@ -1010,7 +1010,7 @@ interface ISesEnum { [PreserveSig] int GetCount(out int c); [PreserveSig] int Ge
 [ComImport, Guid("BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface ISesCtl2 { [PreserveSig] int GetState(out int s); [PreserveSig] int a(); [PreserveSig] int b(); [PreserveSig] int c(); [PreserveSig] int d(); [PreserveSig] int e(); [PreserveSig] int f(); [PreserveSig] int g(); [PreserveSig] int h();
   [PreserveSig] int i(); [PreserveSig] int j(); [PreserveSig] int GetProcessId(out uint pid); [PreserveSig] int IsSystemSoundsSession(); }
-[ComImport, Guid("87CE5498-68D6-44E5-9215-6F4BAB6A8B0E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+[ComImport, Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface ISimpleVol { [PreserveSig] int SetMasterVolume(float l, ref Guid g); [PreserveSig] int GetMasterVolume(out float l); [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool m, ref Guid g); [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool m); }
 
 public static class Ctl {
@@ -1126,10 +1126,22 @@ public static class Mon {
 `;
 const ctlDll = () => path.join(app.getPath("userData"), "ndctl-" + require("crypto").createHash("md5").update(CTL_CS).digest("hex").slice(0, 8) + ".dll");
 function psCtl(script, timeout) {
-  const dll = ctlDll().replace(/'/g, "''");
-  return ps("$dll='" + dll + "'; if (-not (Test-Path -LiteralPath $dll)) { Add-Type -TypeDefinition @'\n" + CTL_CS + "\n'@ -OutputAssembly $dll -OutputType Library }; Add-Type -LiteralPath $dll;" + script, timeout || 40000);
+  // the C# source is too long for a command line, so it is compiled from a file next to the helper
+  const file = ctlDll(), src = file.replace(/\.dll$/, ".cs");
+  if (!fs.existsSync(file)) { try { fs.writeFileSync(src, CTL_CS); } catch (e) {} }
+  const q = s => "'" + s.replace(/'/g, "''") + "'";
+  return ps("$dll=" + q(file) + "; if (-not (Test-Path -LiteralPath $dll)) { Add-Type -Path " + q(src) + " -OutputAssembly $dll -OutputType Library }; Add-Type -LiteralPath $dll;" + script, timeout || 40000);
 }
-const firstLine = t => String(t || "").trim().split(/\r?\n/)[0];
+// PowerShell sends its errors as CLIXML when its output is captured; this turns that back into the plain message
+const firstLine = t => {
+  t = String(t || "");
+  if (/#< CLIXML/.test(t)) {
+    const m = [...t.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map(x => x[1].replace(/_x000D_|_x000A_/g, " ")).join("")
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+    return m.length > 220 ? m.slice(0, 217) + "..." : m;
+  }
+  return t.trim().split(/\r?\n/)[0];
+};
 async function audioDevices() {
   if (!WIN) return { ok: false, msg: "only available on Windows" };
   const r = await psCtl("[NdC.Ctl]::Devices(0) + '@@' + [NdC.Ctl]::Devices(1) + '@@' + [NdC.Ctl]::MicMute(-1)");
@@ -1160,7 +1172,7 @@ function parseSessions(out) {
 async function appVolumes() {
   if (!WIN) return { ok: false, msg: "only available on Windows" };
   const r = await psCtl("[NdC.Ctl]::Sessions(-1, -1, -1)");
-  if (r.err && !r.out.trim()) return { ok: false, msg: "the sound programs could not be read - " + firstLine(r.err) };
+  if (!r.out.trim() && firstLine(r.err)) return { ok: false, msg: "the sound programs could not be read - " + firstLine(r.err) };
   return { ok: true, list: parseSessions(r.out) };
 }
 async function appVolume(pid, vol, mute) {
@@ -1308,13 +1320,13 @@ function applyWin() {
 // Everything is kept in beta.json next to the other settings. Background work only runs while its switch is on.
 const betaFile = () => path.join(app.getPath("userData"), "beta.json");
 const BETA_ON = { profiles: true, game: true, gpu: true, overlay: false, monitors: true, palette: true, schedule: true, alerts: false, usage: false };
-let beta = { on: Object.assign({}, BETA_ON), profiles: {}, game: { apps: [], force: false, active: null, hiPlan: "" }, corner: "tr", palKey: "Control+Alt+Space",
+let beta = { on: Object.assign({}, BETA_ON), profiles: {}, game: { apps: [], force: false, active: null, hiPlan: "" }, corner: "tr", palKey: "Control+Alt+P",
   sched: [], alerts: { cpu: 80, memGb: 4, mins: 3 }, alertLog: [], usage: {}, usagePath: {} };
 let smiExe = null, palReg = "", palOk = false, betaDirty = false;
 function loadBeta() {
   try {
     const j = JSON.parse(fs.readFileSync(betaFile(), "utf8"));
-    if (j && typeof j === "object") { Object.assign(beta, j); beta.on = Object.assign({}, BETA_ON, j.on || {}); beta.game = Object.assign({ apps: [], force: false, active: null, hiPlan: "" }, j.game || {}); }
+    if (j && typeof j === "object") { Object.assign(beta, j); beta.on = Object.assign({}, BETA_ON, j.on || {}); beta.game = Object.assign({ apps: [], force: false, active: null, hiPlan: "" }, j.game || {}); if (!j.palKeyUser) beta.palKey = "Control+Alt+P"; }
   } catch (e) {}
 }
 function saveBeta() { betaDirty = false; try { fs.writeFileSync(betaFile(), JSON.stringify(beta)); } catch (e) {} }
@@ -1329,7 +1341,7 @@ function betaSet(key, v) {
     if (!v || !Object.prototype.hasOwnProperty.call(BETA_ON, v.id)) throw new Error("unknown feature");
     beta.on[v.id] = !!v.on;
   } else if (key === "corner") { if (!["tl", "tr", "bl", "br"].includes(v)) throw new Error("unknown corner"); beta.corner = v; }
-  else if (key === "palKey") { v = String(v).trim(); if (!ACCEL.test(v)) throw new Error("use a combination like Control+Alt+Space"); beta.palKey = v; }
+  else if (key === "palKey") { v = String(v).trim(); if (!ACCEL.test(v)) throw new Error("use a combination like Control+Alt+P"); beta.palKey = v; beta.palKeyUser = true; }
   else if (key === "gameApps") { beta.game.apps = [].concat(v || []).map(procName).filter(n => /^[\w .+\-()]{1,80}$/.test(n) && !isProtected(n)).slice(0, 40); }
   else if (key === "gameForce") beta.game.force = !!v;
   else if (key === "alerts") {

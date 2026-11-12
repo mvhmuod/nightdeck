@@ -248,13 +248,32 @@ v2.43  BETA tab filled
        - Overlay: small always-on-top line with CPU, RAM and GPU.
        - Screens: brightness per screen, main screen only / extend /
          duplicate.
-       - Command search: hotkey (Ctrl+Alt+Space) or Ctrl+K, type to
+       - Command search: hotkey (Ctrl+Alt+P) or Ctrl+K, type to
          find and run any button or switch.
        - Scheduled actions: at a time or when a program starts.
        - Heavy program alerts: notification when a program uses too
          much CPU or memory for a few minutes.
        - Usage time: how long each program was in front, today and
          the last 7 days.
+v2.44  Fixes from the check on the PC
+       - Fixed: sound devices, volume per program, screens and other
+         Windows controls failed with "ENAMETOOLONG" (the helper's code
+         got too long for one command line; it is now read from a file).
+       - Command search hotkey is now Ctrl+Alt+P (Ctrl+Alt+Space was
+         taken by another program).
+       - GPU temperature shown without decimals.
+v2.45  More fixes from the PC check
+       - Fixed: after "update" restarted the app, it could stay hidden
+         in the tray when Nightdeck had been started with Windows.
+       - Windows error messages are shown as plain text instead of
+         "#< CLIXML".
+v2.46  Fixed: volume per program did not work (a wrong Windows
+       interface number in the sound helper).
+v2.47  Fixed: the tools tab showed every tool at once (a style name
+       added for the BETA tab was already used by the tools tab).
+v2.48  Small fixes: a new profile now shows right away even when a
+       feature switch is changed at the same time; profile and game
+       mode messages are no longer written twice in the console.
        >> Current version.
 
 

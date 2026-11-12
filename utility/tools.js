@@ -1944,7 +1944,7 @@
     const pList = h("div"), pNote = h("div", { class: "nd-row" });
     const bSave = btn("save current settings", async () => {
       bSave.disabled = true; bSave.textContent = "reading...";
-      try { cfg.profiles = await api("profSave", pName.value); log("profile saved: " + pName.value.trim()); pName.value = ""; drawProfiles(); }
+      try { const list = await api("profSave", pName.value); cfg.profiles = list; log("profile saved: " + pName.value.trim()); pName.value = ""; drawProfiles(); }
       catch (e) { log("profile: " + e.message); }
       bSave.disabled = false; bSave.textContent = "save current settings";
     });
@@ -1961,26 +1961,26 @@
       for (const p of cfg.profiles) {
         const bApply = btn("apply", async () => {
           bApply.disabled = true;
-          try { const r = await api("profApply", p.name); log("profile " + p.name + " applied" + (r.fails.length ? " - not changed: " + r.fails.join(", ") : "")); }
+          try { await api("profApply", p.name); } // the app writes the result to the console
           catch (e) { log("profile: " + e.message); }
           bApply.disabled = false;
         });
         const bDel = btn("delete", () => {
           pNote.textContent = "";
           pNote.append(h("span", { text: "delete profile " + p.name + "?" }), btn("yes, delete", async () => {
-            pNote.textContent = ""; try { cfg.profiles = await api("profDelete", p.name); drawProfiles(); log("profile deleted: " + p.name); } catch (e) { log(e.message); }
+            pNote.textContent = ""; try { const list = await api("profDelete", p.name); cfg.profiles = list; drawProfiles(); log("profile deleted: " + p.name); } catch (e) { log(e.message); }
           }, "nd-danger"), btn("cancel", () => { pNote.textContent = ""; }));
         });
         pList.append(h("div", { class: "nd-tr nd-prof" }, h("span", { text: p.name, title: profText(p) }), h("span", { class: "nd-dim", text: profText(p) }), h("div", { class: "nd-row" }, bApply, bDel)));
       }
     }
-    sec.profiles = h("div", { class: "nd-sec" }, sub("profiles"), h("div", { class: "nd-row" }, pName, bSave),
+    sec.profiles = h("div", { class: "nd-bsec" }, sub("profiles"), h("div", { class: "nd-row" }, pName, bSave),
       note("saves the power plan, volume, sound output, night light, dark mode and transparency."), pList, pNote);
 
     // 3. game mode
     const bGame = btn("game mode: off", async () => {
       const on = !cfg.game.active; bGame.disabled = true; bGame.textContent = on ? "starting..." : "restoring...";
-      try { const r = await api("gameMode", on); cfg.game.active = r.active; cfg.game.since = Date.now(); log("game mode " + (r.active ? "on" : "off") + (r.notes && r.notes.length ? " - " + r.notes.join(", ") : "")); }
+      try { const r = await api("gameMode", on); cfg.game.active = r.active; cfg.game.since = Date.now(); }
       catch (e) { log("game mode: " + e.message); }
       bGame.disabled = false; drawGame();
     });
@@ -1999,7 +1999,7 @@
       if (!cfg.game.apps.length) gApps.append(note("no programs chosen"));
       for (const n of cfg.game.apps) gApps.append(btn(n + "  ×", () => set("gameApps", cfg.game.apps.filter(x => x !== n), n + " removed from game mode")));
     }
-    sec.game = h("div", { class: "nd-sec" }, sub("game mode"), h("div", { class: "nd-row" }, bGame, note("high performance, no notification banners, chosen programs closed. turning it off puts everything back.")),
+    sec.game = h("div", { class: "nd-bsec" }, sub("game mode"), h("div", { class: "nd-row" }, bGame, note("high performance, no notification banners, chosen programs closed. turning it off puts everything back.")),
       h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "close these" }), gSel, bAdd, btn("refresh", loadRunning)), gApps, gForce.el);
 
     // 4. gpu details
@@ -2012,7 +2012,7 @@
         gpuNote.textContent = "";
         const n = k => g[k] === "" ? null : Number(g[k]);
         G.name.o.textContent = g.name || "-"; G.drv.o.textContent = g.driver_version || "-"; G.ps.o.textContent = g.pstate || "-";
-        G.temp.o.textContent = n("temperature.gpu") != null ? n("temperature.gpu") + " °C" : "-";
+        G.temp.o.textContent = n("temperature.gpu") != null ? Math.round(n("temperature.gpu")) + " °C" : "-";
         G.use.o.textContent = n("utilization.gpu") != null ? n("utilization.gpu") + "%" : "-";
         G.fan.o.textContent = n("fan.speed") != null ? n("fan.speed") + "%" : "-";
         G.mem.o.textContent = n("memory.total") ? (n("memory.used") / 1024).toFixed(1) + " / " + (n("memory.total") / 1024).toFixed(1) + " GB" : "-";
@@ -2021,13 +2021,13 @@
         G.mclk.o.textContent = n("clocks.mem") != null ? n("clocks.mem") + " MHz" : "-";
       } catch (e) { gpuNote.textContent = e.message; }
     }
-    sec.gpu = h("div", { class: "nd-sec" }, sub("gpu details"), h("div", { class: "nd-two" }, h("div", { class: "nd-kv" }, G.name.el, G.temp.el, G.use.el, G.fan.el, G.mem.el),
+    sec.gpu = h("div", { class: "nd-bsec" }, sub("gpu details"), h("div", { class: "nd-two" }, h("div", { class: "nd-kv" }, G.name.el, G.temp.el, G.use.el, G.fan.el, G.mem.el),
       h("div", { class: "nd-kv" }, G.pow.el, G.clk.el, G.mclk.el, G.ps.el, G.drv.el)), gpuNote);
 
     // 5. overlay
     const oCorner = h("select", { class: "nd-input" }, [["tr", "top right"], ["tl", "top left"], ["br", "bottom right"], ["bl", "bottom left"]].map(([v, t]) => h("option", { value: v, text: t })));
     oCorner.addEventListener("change", () => set("corner", oCorner.value, "overlay moved to the " + oCorner.selectedOptions[0].text));
-    sec.overlay = h("div", { class: "nd-sec" }, sub("overlay"), h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "corner" }), oCorner),
+    sec.overlay = h("div", { class: "nd-bsec" }, sub("overlay"), h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "corner" }), oCorner),
       note("shows cpu, memory and gpu on the main screen; clicks go through it. games in exclusive full screen cover it - use borderless or windowed. it is a normal window and does not touch the game."));
 
     // 6. screens
@@ -2052,12 +2052,12 @@
       } catch (e) { mNote.textContent = e.message; }
     }
     const modeBtn = (t, m, msg) => btn(t, async () => { try { const r = await api("screenMode", m); log(r.ok ? msg : "screens: " + r.msg); setTimeout(loadMon, 3000); } catch (e) { log(e.message); } });
-    sec.monitors = h("div", { class: "nd-sec" }, h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "screens" }), btn("refresh", loadMon)), mList, mNote,
+    sec.monitors = h("div", { class: "nd-bsec" }, h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "screens" }), btn("refresh", loadMon)), mList, mNote,
       h("div", { class: "nd-row" }, modeBtn("main screen only", "one", "second screen off"), modeBtn("extend (both)", "extend", "both screens on"), modeBtn("duplicate", "clone", "screens duplicated")));
 
     // 7. command search
     const kIn = h("input", { class: "nd-input", size: "20", spellcheck: "false" }), kNote = note("");
-    sec.palette = h("div", { class: "nd-sec" }, sub("command search"), h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "hotkey" }), kIn,
+    sec.palette = h("div", { class: "nd-bsec" }, sub("command search"), h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "hotkey" }), kIn,
       btn("set", () => set("palKey", kIn.value, "command search hotkey: " + kIn.value.trim())), kNote),
       note("press the hotkey anywhere, or ctrl + k inside nightdeck, then type what you want to do."));
     const pal = h("div", { class: "nd-pal-wrap" }), pIn = h("input", { class: "nd-input", placeholder: "type to search every button and switch...", spellcheck: "false" }), pRes = h("div", { class: "nd-pal-list" });
@@ -2137,7 +2137,7 @@
       const r = { kind: sKind.value, time: sTime.value, days: sDays.value, proc: sProc.value, action, on: true };
       set("sched", cfg.sched.concat(r), "scheduled: " + (r.kind === "time" ? r.time : "when " + r.proc.trim() + " starts") + " → " + actText(action)).then(ok => { if (ok) sProc.value = ""; });
     });
-    sec.schedule = h("div", { class: "nd-sec" }, sub("scheduled actions"), h("div", { class: "nd-row" }, sKind, sTime, sDays, sProc, sAct, bAddS), sList,
+    sec.schedule = h("div", { class: "nd-bsec" }, sub("scheduled actions"), h("div", { class: "nd-row" }, sKind, sTime, sDays, sProc, sAct, bAddS), sList,
       note("runs while nightdeck is open (also hidden in the tray). program rules notice a start within about 10 seconds."));
 
     // 9. heavy program alerts
@@ -2148,7 +2148,7 @@
       if (!cfg.alertLog.length) aLog.append(note("no alerts yet"));
       for (const a of cfg.alertLog) aLog.append(h("div", { class: "nd-info" }, h("span", { text: a.msg }), h("output", { text: new Date(a.t).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) })));
     }
-    sec.alerts = h("div", { class: "nd-sec" }, sub("heavy program alerts"),
+    sec.alerts = h("div", { class: "nd-bsec" }, sub("heavy program alerts"),
       h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "cpu over" }), aCpu, h("span", { class: "nd-dim", text: "% or memory over" }), aMem, h("span", { class: "nd-dim", text: "GB for" }), aMin, h("span", { class: "nd-dim", text: "min" }),
         btn("save", () => set("alerts", { cpu: Number(aCpu.value), memGb: Number(aMem.value), mins: Number(aMin.value) }, "alert limits saved"))),
       h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "recent alerts" }), btn("clear", () => set("alertClear", true, "alerts cleared"))), aLog,
@@ -2177,7 +2177,7 @@
       uNote.textContent = "";
       uNote.append(h("span", { text: "delete all counted usage time?" }), btn("yes, delete", async () => { uNote.textContent = ""; try { await api("usageReset"); log("usage time reset"); loadUsage(); } catch (e) { log(e.message); } }, "nd-danger"), btn("cancel", () => { uNote.textContent = ""; }));
     });
-    sec.usage = h("div", { class: "nd-sec" }, h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "usage time" }), bToday, bWeek, btn("refresh", loadUsage), bReset, uTotal), uNote, uList);
+    sec.usage = h("div", { class: "nd-bsec" }, h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "usage time" }), bToday, bWeek, btn("refresh", loadUsage), bReset, uTotal), uNote, uList);
 
     root.append(sub("features"), h("div", { class: "nd-grid2", "data-nopal": "1" }, FEATS.map(([id]) => feat[id].el)),
       note("these are test features. switch off what you do not use - background ones only run while switched on."),
