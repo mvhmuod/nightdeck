@@ -203,6 +203,16 @@ v2.39  Capture tab rebuilt
        - Global hotkey for a screenshot from anywhere.
        - Editor: arrows, boxes and text in five colours, undo.
        - Screen recording of a screen or window as .webm, no sound.
+v2.40  Tools tab, first part
+       - Calculation history for standard and scientific (Enter keeps a
+         result, click to reuse, kept after a restart).
+       - Keyboard: the input is ready to type, Escape clears.
+       - Copy buttons on results (calculators, programmer, converter).
+       - Converter: pin favourite conversions, "refresh rates" button.
+         Rate date and offline copy were already shown.
+       - New "percent" page: % of, what %, change, VAT (19% / 7%),
+         discount.
+       - Colour: pick from screen, HEX / RGB / HSL with copy, palette.
        >> Current version.
 
 

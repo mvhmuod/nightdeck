@@ -1233,6 +1233,23 @@
     const root = $c("tools"); if (!root) return;
     const num = v => parseFloat(String(v).replace(",", "."));
     const show = v => isFinite(v) ? String(+v.toPrecision(12)) : "not a number";
+    // ---- shared: copy a result, and the calculation history (kept between restarts) ----
+    const copy = t => api("copyText", t).then(() => log("copied " + t)).catch(e => log("copy failed: " + e.message));
+    const isNum = t => /^-?[\d.]+(e[+-]?\d+)?$/i.test(t);
+    let hist = store.get("calchist", []); if (!Array.isArray(hist)) hist = [];
+    const histBoxes = [];
+    function drawHist() {
+      for (const { box, inp, run } of histBoxes) {
+        box.textContent = "";
+        if (!hist.length) { box.append(h("span", { class: "nd-dim", text: "press Enter to keep a result here" })); continue; }
+        for (const it of hist) {
+          const el = h("div", { class: "nd-hitem", title: "click to use again" }, h("span", { text: it.q }), h("output", { text: "= " + it.r }));
+          el.addEventListener("click", () => { inp.value = it.q; run(); inp.focus(); }); box.append(el);
+        }
+      }
+    }
+    function keep(q, r) { hist = [{ q, r }].concat(hist.filter(x => x.q !== q)).slice(0, 30); store.set("calchist", hist); drawHist(); }
+    const clearHist = () => { hist = []; store.set("calchist", hist); drawHist(); };
 
     // ---- expression parser (no eval). Decimals: 1.5 or 1,5. Two-value functions use ";" ----
     function evaluate(src, opt) {
@@ -1282,7 +1299,7 @@
     }
 
     // ---- sub-menu ----
-    const modes = ["standard", "scientific", "graphing", "programmer", "date", "converter", "colour"];
+    const modes = ["standard", "scientific", "graphing", "programmer", "date", "percent", "converter", "colour"];
     const sections = {}, buttons = {}, onShow = {};
     const nav = h("div", { class: "nd-row nd-modes" });
     root.append(nav);
@@ -1297,12 +1314,20 @@
       const inp = h("input", { class: "nd-input nd-grow", placeholder, spellcheck: "false" }), out = h("output", { class: "nd-result", text: "=" });
       const run = () => { try { const v = evaluate(inp.value, opt()); out.textContent = v == null ? "=" : "= " + (v === Infinity || v === -Infinity ? "cannot divide by zero" : show(v)); } catch (e) { out.textContent = "= ?"; } };
       inp.addEventListener("input", run);
-      inp.addEventListener("keydown", e => { if (e.key === "Enter" && out.textContent.length > 2 && out.textContent !== "= ?") log(label + ": " + inp.value + " " + out.textContent); });
-      return { inp, out, run };
+      inp.addEventListener("keydown", e => {
+        const r = out.textContent.slice(2);
+        if (e.key === "Enter" && isNum(r)) { log(label + ": " + inp.value + " = " + r); keep(inp.value.trim(), r); }
+        if (e.key === "Escape") { inp.value = ""; run(); }
+      });
+      const cp = btn("copy", () => { const r = out.textContent.slice(2); if (isNum(r)) copy(r); });
+      const box = h("div", { class: "nd-hist2" }); histBoxes.push({ box, inp, run });
+      return { inp, out, run, cp, box };
     }
     const std = calcRow("e.g. (12,5 + 3) * 4", () => ({}), "calc");
-    section("standard", h("div", { class: "nd-row" }, std.inp, std.out),
-      h("span", { class: "nd-dim", text: "+  -  *  /  %  ^  ( )   -   press Enter to keep the result in the console" }));
+    section("standard", h("div", { class: "nd-row" }, std.inp, std.out, std.cp),
+      h("span", { class: "nd-dim", text: "+  -  *  /  %  ^  ( )   -   type on the keyboard, Enter keeps the result in the history, Escape clears" }),
+      h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "history" }), btn("clear history", clearHist)), std.box);
+    onShow.standard = () => { drawHist(); std.inp.focus(); };
 
     // ---- scientific ----
     let deg = store.get("deg", true);
@@ -1312,8 +1337,11 @@
     const fnRow = h("div", { class: "nd-row nd-fns" });
     for (const f of ["sin(", "cos(", "tan(", "asin(", "acos(", "atan(", "sqrt(", "cbrt(", "ln(", "log(", "exp(", "abs(", "pi", "e", "^", "!", "(", ")"])
       fnRow.append(btn(f, () => { const a = sci.inp.selectionStart == null ? sci.inp.value.length : sci.inp.selectionStart; sci.inp.value = sci.inp.value.slice(0, a) + f + sci.inp.value.slice(sci.inp.selectionEnd == null ? a : sci.inp.selectionEnd); sci.inp.focus(); sci.inp.selectionStart = sci.inp.selectionEnd = a + f.length; sci.run(); }));
-    section("scientific", h("div", { class: "nd-row" }, sci.inp, sci.out), h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "angles in" }), degBtn), fnRow,
-      h("span", { class: "nd-dim", text: "also: sinh cosh tanh log2 floor ceil round, and root(27;3) pow(2;8) mod(7;3) min(a;b) max(a;b)" }));
+    section("scientific", h("div", { class: "nd-row" }, sci.inp, sci.out, sci.cp), h("div", { class: "nd-row" }, h("span", { class: "nd-dim", text: "angles in" }), degBtn), fnRow,
+      h("span", { class: "nd-dim", text: "also: sinh cosh tanh log2 floor ceil round, and root(27;3) pow(2;8) mod(7;3) min(a;b) max(a;b)" }),
+      h("div", { class: "nd-sub", text: "history" }), sci.box);
+    onShow.scientific = () => { drawHist(); sci.inp.focus(); };
+    drawHist();
 
     // ---- graphing ----
     const gIn = h("input", { class: "nd-input nd-grow", value: store.get("graph", "sin(x) * x"), spellcheck: "false" });
@@ -1366,7 +1394,7 @@
     }
     const pIn = h("input", { class: "nd-input nd-grow", placeholder: "e.g. 255, 0xFF, 0b1010, 0xF0 | 0x0F, 1 << 8", spellcheck: "false" });
     const pOut = {}; const pRows = h("div", { class: "nd-kv" });
-    for (const k of ["HEX", "DEC", "OCT", "BIN"]) { pOut[k] = h("output", { class: "nd-wrap" }); pRows.append(h("div", { class: "nd-info" }, h("span", { text: k }), pOut[k])); }
+    for (const k of ["HEX", "DEC", "OCT", "BIN"]) { pOut[k] = h("output", { class: "nd-wrap" }); pRows.append(h("div", { class: "nd-info" }, h("span", { text: k }), h("span", { class: "nd-row nd-ipcopy" }, pOut[k], btn("copy", () => { const t = pOut[k].textContent.replace(/ /g, ""); if (t && t !== "?") copy(t); })))); }
     pIn.addEventListener("input", () => {
       let v; try { v = evalInt(pIn.value); } catch (e) { for (const k in pOut) pOut[k].textContent = "?"; return; }
       if (v == null) { for (const k in pOut) pOut[k].textContent = ""; return; }
@@ -1404,6 +1432,32 @@
       h("div", { class: "nd-sub", text: "add or subtract days" }), h("div", { class: "nd-row" }, dC, h("span", { class: "nd-dim", text: "plus" }), dN, h("span", { class: "nd-dim", text: "days (use a minus for earlier)" })), dRes);
     onShow.date = () => { diff(); addDays(); };
 
+    // ---- percent, VAT and discount ----
+    const pctRuns = [], s6 = x => show(Math.round(x * 1e6) / 1e6), money = x => (Math.round(x * 100) / 100).toFixed(2);
+    function pctRow(parts, calc) { // "@key=default" is an input box, anything else is a label
+      const ins = {}, out = h("output", { class: "nd-result", text: "=" }), row = h("div", { class: "nd-row" });
+      for (const p of parts) {
+        if (p[0] !== "@") { row.append(h("span", { class: "nd-dim", text: p })); continue; }
+        const [k, def] = p.slice(1).split("=");
+        ins[k] = h("input", { class: "nd-input", size: "8", value: store.get("pct-" + k, def || "") });
+        ins[k].addEventListener("input", () => { store.set("pct-" + k, ins[k].value); run(); }); row.append(ins[k]);
+      }
+      const run = () => { const v = {}; for (const k in ins) v[k] = num(ins[k].value); out.textContent = Object.values(v).some(x => !isFinite(x)) ? "=" : "= " + calc(v); };
+      row.append(out, btn("copy", () => { const m = /^= (-?[\d.]+)/.exec(out.textContent); if (m) copy(m[1]); }));
+      pctRuns.push(run); return row;
+    }
+    section("percent",
+      h("div", { class: "nd-sub", text: "percent" }),
+      pctRow(["@p1=19", "% of", "@v1=100"], v => s6(v.p1 * v.v1 / 100)),
+      pctRow(["@a2=25", "is what % of", "@b2=200"], v => s6(v.a2 / v.b2 * 100) + " %"),
+      pctRow(["change from", "@a3=80", "to", "@b3=100"], v => { const d = (v.b3 - v.a3) / Math.abs(v.a3) * 100; return isFinite(d) ? (d >= 0 ? "+" : "") + s6(d) + " %" : "?"; }),
+      h("div", { class: "nd-sub", text: "vat (19% normal, 7% reduced)" }),
+      pctRow(["net", "@n4=100", "plus", "@r4=19", "% vat"], v => money(v.n4 * (1 + v.r4 / 100)) + "   (vat " + money(v.n4 * v.r4 / 100) + ")"),
+      pctRow(["gross", "@g5=119", "with", "@r5=19", "% vat"], v => { const n = v.g5 / (1 + v.r5 / 100); return money(n) + " net   (vat " + money(v.g5 - n) + ")"; }),
+      h("div", { class: "nd-sub", text: "discount" }),
+      pctRow(["price", "@p6=50", "minus", "@d6=20", "%"], v => money(v.p6 * (1 - v.d6 / 100)) + "   (you save " + money(v.p6 * v.d6 / 100) + ")"));
+    onShow.percent = () => pctRuns.forEach(r => r());
+
     // ---- converter ----
     const U = {
       currency: {},
@@ -1431,7 +1485,7 @@
       conv();
     }
     function conv() {
-      uAlso.textContent = uCat.value === "currency" ? rateNote : "";
+      uAlso.textContent = uCat.value === "currency" ? rateNote : ""; bRates.style.display = uCat.value === "currency" ? "" : "none";
       const v = num(uVal.value), T = U[uCat.value];
       if (!Object.keys(T).length) { uOut.textContent = "= ..."; return; }
       if (!isFinite(v)) { uOut.textContent = "= ?"; return; }
@@ -1451,27 +1505,71 @@
       for (const c of Object.keys(d.rates).sort()) if (/^[A-Z]{3}$/.test(c) && d.rates[c] > 0 && !T[c]) T[c] = 1 / d.rates[c];
       U.currency = T; rateNote = "rates by " + d.source + ", updated " + d.updated + (stale ? " (saved copy - could not refresh)" : "");
     }
-    async function loadRates() {
-      if (Object.keys(U.currency).length && rateNote.indexOf("saved copy") < 0) return;
+    async function loadRates(force) {
+      if (!force && Object.keys(U.currency).length && rateNote.indexOf("saved copy") < 0) return;
       const saved = store.get("rates", null);
       try { const d = await api("rates"); store.set("rates", d); useRates(d, false); log("currency rates loaded (" + d.updated + ")"); }
-      catch (e) { if (saved) useRates(saved, true); else rateNote = "currency rates need an internet connection"; }
+      catch (e) { if (force) log("currency rates could not be refreshed - " + (saved ? "using the saved copy" : "no internet?")); if (saved) useRates(saved, true); else rateNote = "currency rates need an internet connection"; }
       if (uCat.value === "currency") fill();
     }
     uCat.addEventListener("change", () => { store.set("ucat", uCat.value); fill(); if (uCat.value === "currency") loadRates(); });
     for (const e of [uVal, uFrom, uTo]) e.addEventListener("input", conv);
     const swap = btn("swap", () => { const a = uFrom.value; uFrom.value = uTo.value; uTo.value = a; conv(); });
-    section("converter", h("div", { class: "nd-row" }, uCat, uVal, uFrom, h("span", { class: "nd-dim", text: "to" }), uTo, swap), uOut, uAlso);
-    onShow.converter = () => { fill(); if (uCat.value === "currency") loadRates(); };
+    // favourite conversions
+    let favs = store.get("ufavs", []); if (!Array.isArray(favs)) favs = [];
+    const favRow = h("div", { class: "nd-row" });
+    function drawFavs() {
+      favRow.textContent = "";
+      if (!favs.length) { favRow.append(h("span", { class: "nd-dim", text: "press pin to keep a conversion here" })); return; }
+      favs.forEach((f, i) => favRow.append(h("span", { class: "nd-preset" }, btn(f[1] + " \u2192 " + f[2], () => {
+        if (!U[f[0]]) return; uCat.value = f[0]; store.set("ucat", f[0]); store.set("upick-" + f[0], [f[1], f[2]]); fill(); if (f[0] === "currency") loadRates();
+      }), h("button", { class: "nd-btn", text: "x", title: "Remove", onclick: () => { favs.splice(i, 1); store.set("ufavs", favs); drawFavs(); } }))));
+    }
+    const pin = btn("pin", () => { const f = [uCat.value, uFrom.value, uTo.value]; if (!f[1] || favs.some(x => x.join() === f.join())) return; favs.push(f); favs = favs.slice(-12); store.set("ufavs", favs); drawFavs(); });
+    const cpU = btn("copy", () => { const m = /^= (-?[\d.e+]+)/i.exec(uOut.textContent); if (m) copy(m[1]); });
+    const bRates = btn("refresh rates", () => loadRates(true));
+    section("converter", h("div", { class: "nd-row" }, uCat, uVal, uFrom, h("span", { class: "nd-dim", text: "to" }), uTo, swap, pin), h("div", { class: "nd-row" }, uOut, cpU, bRates), uAlso,
+      h("div", { class: "nd-sub", text: "favourites" }), favRow);
+    onShow.converter = () => { drawFavs(); fill(); if (uCat.value === "currency") loadRates(); };
 
     // ---- colour picker ----
-    const col = h("input", { type: "color", class: "nd-color", value: store.get("color", "#4fc3d9") }), colOut = h("output", { class: "nd-result" });
-    const rgb = hex => "rgb(" + [1, 3, 5].map(n => parseInt(hex.slice(n, n + 2), 16)).join(", ") + ")";
-    const showCol = () => { colOut.textContent = col.value.toUpperCase() + "   " + rgb(col.value); store.set("color", col.value); };
+    const col = h("input", { type: "color", class: "nd-color", value: store.get("color", "#4fc3d9") }), colOut = h("div", { class: "nd-kv" }), pal = h("div", { class: "nd-row nd-pal" });
+    const hexRgb = hex => [1, 3, 5].map(n => parseInt(hex.slice(n, n + 2), 16));
+    const rgb = hex => "rgb(" + hexRgb(hex).join(", ") + ")";
+    function hsl(hex) {
+      const [r, g, b] = hexRgb(hex).map(v => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2; let hh = 0, s = 0;
+      if (mx !== mn) { const d = mx - mn; s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn); hh = (mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60; }
+      return "hsl(" + Math.round(hh) + ", " + Math.round(s * 100) + "%, " + Math.round(l * 100) + "%)";
+    }
+    function showCol() {
+      colOut.textContent = "";
+      for (const [k, v] of [["hex", col.value.toUpperCase()], ["rgb", rgb(col.value)], ["hsl", hsl(col.value)]])
+        colOut.append(h("div", { class: "nd-info" }, h("span", { text: k }), h("span", { class: "nd-row nd-ipcopy" }, h("output", { text: v }), btn("copy", () => copy(v)))));
+      store.set("color", col.value);
+    }
     col.addEventListener("input", showCol);
-    const copy = t => api("copyText", t).then(() => log("copied " + t)).catch(e => log("copy failed: " + e.message));
-    section("colour", h("div", { class: "nd-row" }, col, colOut, btn("copy hex", () => copy(col.value.toUpperCase())), btn("copy rgb", () => copy(rgb(col.value)))));
-    showCol();
+    let palette = store.get("palette", []); if (!Array.isArray(palette)) palette = [];
+    function drawPal() {
+      pal.textContent = "";
+      if (!palette.length) pal.append(h("span", { class: "nd-dim", text: "no saved colours yet" }));
+      palette.forEach((c, i) => {
+        const sw = h("button", { class: "nd-btn nd-col", title: c.toUpperCase() + " - click to use, right-click to remove" }); sw.style.background = c;
+        sw.addEventListener("click", () => { col.value = c; showCol(); });
+        sw.addEventListener("contextmenu", e => { e.preventDefault(); palette.splice(i, 1); store.set("palette", palette); drawPal(); });
+        pal.append(sw);
+      });
+    }
+    const bSaveCol = btn("save colour", () => { const c = col.value.toLowerCase(); palette = [c].concat(palette.filter(x => x !== c)).slice(0, 24); store.set("palette", palette); drawPal(); });
+    const bDrop = btn("pick from screen", async () => {
+      if (!window.EyeDropper) { log("colour: picking from the screen is not available here"); return; }
+      try {
+        const r = await new EyeDropper().open(), m = /^#?([0-9a-f]{6})/i.exec(r && r.sRGBHex || "");
+        if (m) { col.value = "#" + m[1].toLowerCase(); showCol(); log("picked " + col.value.toUpperCase()); }
+      } catch (e) {} // cancelled with Escape
+    });
+    section("colour", h("div", { class: "nd-row" }, col, bDrop, bSaveCol), colOut, h("div", { class: "nd-sub", text: "palette" }), pal,
+      h("span", { class: "nd-dim", text: "click a saved colour to use it, right-click to remove it" }));
+    showCol(); drawPal();
 
     for (const m of modes) { buttons[m] = btn(m, () => pick(m)); nav.append(buttons[m]); }
     const startMode = store.get("toolmode", "standard");

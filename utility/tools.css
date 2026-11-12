@@ -170,6 +170,13 @@ input[type=time].nd-input,input[type=number].nd-input{color-scheme:dark}
 .nd-rvid{display:flex; align-items:center; justify-content:center; color:#7d8891; font-size:11px}
 .nd-rcard .nd-btn{padding:1px 6px}
 .nd-rcard .nd-row{flex-wrap:nowrap; gap:4px}
+/* tools tab */
+.nd-hist2{display:flex; flex-direction:column; max-height:170px; overflow-y:auto; scrollbar-width:none}
+.nd-hist2::-webkit-scrollbar{display:none}
+.nd-hitem{display:flex; justify-content:space-between; gap:12px; padding:3px 0; border-bottom:1px solid #1e242a; cursor:pointer}
+.nd-hitem span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#aeb7be}
+.nd-hitem:hover span,.nd-hitem:hover output{color:#4fc3d9}
+.nd-pal{gap:6px}
 /* network tab */
 .nd-netbars{gap:9px 18px}
 .nd-spark{width:100%; height:38px; background:#0f1215; border:1px solid #2a3138; display:block}
