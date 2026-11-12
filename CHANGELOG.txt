@@ -282,6 +282,9 @@ v2.49  BETA: remote control for Claude
        - It cannot start or close programs, delete files or shut down.
        - Every change shows in the console; it switches itself off
          after one hour.
+v2.50  Remote control: "one more hour" did not add time (it reset the
+       timer to one hour from the click). The button is now "add one
+       hour" and each click adds an hour, up to 4 hours.
        >> Current version.
 
 

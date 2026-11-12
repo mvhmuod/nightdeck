@@ -2182,8 +2182,8 @@
     // 11. remote control for claude
     const rState = note(""), rDir = h("span", { class: "nd-dim nd-pw", text: "" });
     sec.remote = h("div", { class: "nd-bsec" }, h("div", { class: "nd-row" }, h("span", { class: "nd-sub", text: "remote control for claude" }), rState,
-      btn("one more hour", () => set("feat", { id: "remote", on: true }, "remote control on for one more hour"))),
-      note("lets claude read nightdeck's values and change settings that can be undone, by putting small request files in this folder. it cannot start or close programs, delete files or shut down. every change is written in the console. it switches itself off after one hour."), rDir);
+      btn("add one hour", () => set("feat", { id: "remote", on: true }).then(() => log(cfg.on.remote ? "remote control on until " + new Date(cfg.remoteUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " (4 hours at most)" : "remote control could not be switched on")))),
+      note("lets claude read nightdeck's values and change settings that can be undone, by putting small request files in this folder. it cannot start or close programs, delete files or shut down. every change is written in the console. it switches itself off when the time runs out: one hour, and each \"add one hour\" adds another (4 hours at most)."), rDir);
     function drawRemote() {
       rState.textContent = cfg.on.remote && cfg.remoteUntil ? "on until " + new Date(cfg.remoteUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "off";
       rDir.textContent = cfg.remoteDir || "";

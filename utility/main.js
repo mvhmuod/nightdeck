@@ -1339,8 +1339,10 @@ function betaGet() {
 function betaSet(key, v) {
   if (key === "feat") {
     if (!v || !Object.prototype.hasOwnProperty.call(BETA_ON, v.id)) throw new Error("unknown feature");
+    // remote control: switching it on gives one hour; while it is on, each "add one hour" adds an hour (4 hours at most)
+    if (v.id === "remote") beta.remoteUntil = !v.on ? 0 : beta.on.remote && beta.remoteUntil > Date.now()
+      ? Math.min(beta.remoteUntil + REMOTE_MS, Date.now() + 4 * REMOTE_MS) : Date.now() + REMOTE_MS;
     beta.on[v.id] = !!v.on;
-    if (v.id === "remote") beta.remoteUntil = v.on ? Date.now() + REMOTE_MS : 0;
   } else if (key === "corner") { if (!["tl", "tr", "bl", "br"].includes(v)) throw new Error("unknown corner"); beta.corner = v; }
   else if (key === "palKey") { v = String(v).trim(); if (!ACCEL.test(v)) throw new Error("use a combination like Control+Alt+P"); beta.palKey = v; beta.palKeyUser = true; }
   else if (key === "gameApps") { beta.game.apps = [].concat(v || []).map(procName).filter(n => /^[\w .+\-()]{1,80}$/.test(n) && !isProtected(n)).slice(0, 40); }
