@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, ipcMain, screen, clipboard, dialog, desktopCapturer, Notification, Tray, globalShortcut, powerSaveBlocker, nativeImage, powerMonitor } = require("electron");
+const { app, BrowserWindow, Menu, shell, ipcMain, screen, clipboard, dialog, desktopCapturer, Notification, Tray, globalShortcut, powerSaveBlocker, nativeImage } = require("electron");
 const { execFile, spawn } = require("child_process");
 const netmod = require("net");
 const https = require("https");
@@ -697,7 +697,7 @@ async function readTemps() {
       let last = { ok: false, out: "", err: "nvidia-smi not found" };
       for (const exe of smiPaths) {
         last = await run(exe, ["--query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total,name", "--format=csv,noheader,nounits"], 10000);
-        if (last.ok) { smiExe = exe; break; }
+        if (last.ok) break;
       }
       return last;
     })();
@@ -977,7 +977,7 @@ function applyTray() {
 }
 const ACCEL = /^((Control|Ctrl|Alt|Shift|Super)\+){1,3}([A-Z0-9]|F([1-9]|1[0-2])|Space)$/i;
 function applyHotkey() {
-  globalShortcut.unregisterAll(); hotkeyOk = false; setTimeout(() => { registerCapKey(); registerLaunchKeys(); registerPalKey(); }, 0); // the shortcut hotkeys are put back right after
+  globalShortcut.unregisterAll(); hotkeyOk = false; setTimeout(() => { registerCapKey(); registerLaunchKeys(); }, 0); // the shortcut hotkeys are put back right after
   if (settings.hotkey && ACCEL.test(settings.accel)) { try { hotkeyOk = globalShortcut.register(settings.accel, toggleAll); } catch (e) { hotkeyOk = false; } }
 }
 // ---- Control extras: audio devices, volume per program, night light, desktop, radios, wallpaper, cleanup, backup ----
@@ -1078,49 +1078,6 @@ public static class Ctl {
   }
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool SystemParametersInfo(uint a, uint b, string c, uint d);
   public static bool Wall(string p) { return SystemParametersInfo(20, 0, p, 3); }
-}
-public static class Mon {
-  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct PM { public IntPtr h; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string d; }
-  [StructLayout(LayoutKind.Sequential)] public struct RC { public int l, t, r, b; }
-  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct MI { public int cb; public RC m; public RC w; public uint f; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dev; }
-  public delegate bool MEP(IntPtr hm, IntPtr dc, ref RC r, IntPtr p);
-  [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MEP cb, IntPtr p);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr hm, ref MI mi);
-  [DllImport("dxva2.dll")] static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr hm, out uint n);
-  [DllImport("dxva2.dll")] static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr hm, uint n, [Out] PM[] a);
-  [DllImport("dxva2.dll")] static extern bool DestroyPhysicalMonitors(uint n, PM[] a);
-  [DllImport("dxva2.dll")] static extern bool GetVCPFeatureAndVCPFeatureReply(IntPtr h, byte code, IntPtr type, out uint cur, out uint max);
-  [DllImport("dxva2.dll")] static extern bool SetVCPFeature(IntPtr h, byte code, uint v);
-  [DllImport("user32.dll")] static extern int SetDisplayConfig(uint a, IntPtr b, uint c, IntPtr d, uint flags);
-  // one line per screen: number, main screen, device, name, brightness (-1 = not controllable), size
-  public static string Run(int which, int set) {
-    var list = new System.Collections.Generic.List<IntPtr>();
-    MEP cb = delegate(IntPtr hm, IntPtr dc, ref RC r, IntPtr p) { list.Add(hm); return true; };
-    EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, cb, IntPtr.Zero);
-    GC.KeepAlive(cb);
-    var sb = new StringBuilder();
-    for (int i = 0; i < list.Count; i++) {
-      var mi = new MI(); mi.cb = Marshal.SizeOf(typeof(MI)); GetMonitorInfo(list[i], ref mi);
-      int b = -1; string desc = ""; uint n;
-      if (GetNumberOfPhysicalMonitorsFromHMONITOR(list[i], out n) && n > 0) {
-        var a = new PM[n];
-        if (GetPhysicalMonitorsFromHMONITOR(list[i], n, a)) {
-          try {
-            desc = a[0].d ?? ""; uint cur, max;
-            if (GetVCPFeatureAndVCPFeatureReply(a[0].h, 0x10, IntPtr.Zero, out cur, out max) && max > 0) {
-              b = (int)(cur * 100 / max);
-              if (which == i && set >= 0 && SetVCPFeature(a[0].h, 0x10, (uint)(max * set / 100))) b = set;
-            }
-          } finally { DestroyPhysicalMonitors(n, a); }
-        }
-      }
-      sb.Append(i).Append('\t').Append((mi.f & 1) != 0 ? 1 : 0).Append('\t').Append(mi.dev).Append('\t').Append(desc.Replace('\t', ' '))
-        .Append('\t').Append(b).Append('\t').Append(mi.m.r - mi.m.l).Append('x').Append(mi.m.b - mi.m.t).Append('\n');
-    }
-    return sb.ToString();
-  }
-  // 1 = main screen only, 2 = duplicate, 4 = extend
-  public static int Topo(int t) { uint f = t == 1 ? 1u : t == 2 ? 2u : 4u; return SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, f | 0x80); }
 }
 }
 `;
@@ -1291,7 +1248,7 @@ async function openSetting(k) {
   throw new Error("unknown settings page");
 }
 // backup of everything Nightdeck keeps: the window's own storage plus the settings files
-const BK_FILES = ["settings.json", "clipboard.json", "capture.json", "beta.json"];
+const BK_FILES = ["settings.json", "clipboard.json", "capture.json"];
 async function backupSave(local) {
   if (!local || typeof local !== "object") throw new Error("nothing to back up");
   const files = {}; for (const f of BK_FILES) { try { files[f] = fs.readFileSync(path.join(app.getPath("userData"), f), "utf8"); } catch (e) {} }
@@ -1314,404 +1271,6 @@ async function backupLoad() {
 function appRestart() { quitting = true; app.relaunch({ args: process.argv.slice(1).filter(a => a !== "--startup") }); setTimeout(() => app.quit(), 300); return true; }
 function applyWin() {
   for (const w of [main, con]) if (w && !w.isDestroyed()) { try { w.setAlwaysOnTop(!!settings.onTop); w.setOpacity(Math.max(0.5, Math.min(1, Number(settings.opacity) || 1))); } catch (e) {} }
-}
-
-// ---- BETA: feature switches, profiles, game mode, gpu details, overlay, screens, command search, schedule, alerts, usage time ----
-// Everything is kept in beta.json next to the other settings. Background work only runs while its switch is on.
-const betaFile = () => path.join(app.getPath("userData"), "beta.json");
-const BETA_ON = { profiles: true, game: true, gpu: true, overlay: false, monitors: true, palette: true, schedule: true, alerts: false, usage: false, remote: false };
-let beta = { on: Object.assign({}, BETA_ON), profiles: {}, game: { apps: [], force: false, active: null, hiPlan: "" }, corner: "tr", palKey: "Control+Alt+P",
-  sched: [], alerts: { cpu: 80, memGb: 4, mins: 3 }, alertLog: [], usage: {}, usagePath: {} };
-let smiExe = null, palReg = "", palOk = false, betaDirty = false;
-function loadBeta() {
-  try {
-    const j = JSON.parse(fs.readFileSync(betaFile(), "utf8"));
-    if (j && typeof j === "object") { Object.assign(beta, j); beta.on = Object.assign({}, BETA_ON, j.on || {}); beta.game = Object.assign({ apps: [], force: false, active: null, hiPlan: "" }, j.game || {}); if (!j.palKeyUser) beta.palKey = "Control+Alt+P"; }
-  } catch (e) {}
-}
-function saveBeta() { betaDirty = false; try { fs.writeFileSync(betaFile(), JSON.stringify(beta)); } catch (e) {} }
-const cleanName = n => { n = String(n || "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 40); if (!n) throw new Error("give it a name"); return n; };
-const procName = n => String(n || "").trim().replace(/\.exe$/i, "");
-function betaGet() {
-  return { on: beta.on, profiles: profList(), game: { apps: beta.game.apps, force: !!beta.game.force, active: !!beta.game.active, since: beta.game.active ? beta.game.active.t : 0 },
-    corner: beta.corner, remoteUntil: beta.remoteUntil || 0, remoteDir: remoteDir(), palKey: beta.palKey, palOk, sched: beta.sched, alerts: beta.alerts, alertLog: beta.alertLog };
-}
-function betaSet(key, v) {
-  if (key === "feat") {
-    if (!v || !Object.prototype.hasOwnProperty.call(BETA_ON, v.id)) throw new Error("unknown feature");
-    // remote control: switching it on gives one hour; while it is on, each "add one hour" adds an hour (4 hours at most)
-    if (v.id === "remote") beta.remoteUntil = !v.on ? 0 : beta.on.remote && beta.remoteUntil > Date.now()
-      ? Math.min(beta.remoteUntil + REMOTE_MS, Date.now() + 4 * REMOTE_MS) : Date.now() + REMOTE_MS;
-    beta.on[v.id] = !!v.on;
-  } else if (key === "corner") { if (!["tl", "tr", "bl", "br"].includes(v)) throw new Error("unknown corner"); beta.corner = v; }
-  else if (key === "palKey") { v = String(v).trim(); if (!ACCEL.test(v)) throw new Error("use a combination like Control+Alt+P"); beta.palKey = v; beta.palKeyUser = true; }
-  else if (key === "gameApps") { beta.game.apps = [].concat(v || []).map(procName).filter(n => /^[\w .+\-()]{1,80}$/.test(n) && !isProtected(n)).slice(0, 40); }
-  else if (key === "gameForce") beta.game.force = !!v;
-  else if (key === "alerts") {
-    const cpu = Number(v && v.cpu), mem = Number(v && v.memGb), mins = Number(v && v.mins);
-    if (!(cpu >= 10 && cpu <= 100) || !(mem >= 0.5 && mem <= 64) || !(mins >= 1 && mins <= 60)) throw new Error("use cpu 10-100 %, memory 0.5-64 GB and 1-60 minutes");
-    beta.alerts = { cpu, memGb: mem, mins: Math.round(mins) };
-  } else if (key === "alertClear") beta.alertLog = [];
-  else if (key === "sched") beta.sched = [].concat(v || []).slice(0, 30).map(checkRule);
-  else throw new Error("unknown setting");
-  saveBeta(); betaApply();
-  return betaGet();
-}
-function betaApply() { overlayApply(); registerPalKey(); watchApply(); remoteApply(); }
-
-// profiles: a saved set of power plan, volume, sound output, night light and a few windows switches
-const PROF_SW = ["appsDark", "sysDark", "transparency", "toasts"];
-async function swGet(id) {
-  const sw = SWITCHES[id], r = await run("reg.exe", ["query", sw.key, "/v", sw.name]), m = /REG_DWORD\s+0x([0-9a-f]+)/i.exec(r.out);
-  return m ? parseInt(m[1], 16) === sw.on : !!sw.dflt;
-}
-function profList() { return Object.keys(beta.profiles).sort().map(name => Object.assign({ name }, beta.profiles[name])); }
-async function profSave(name) {
-  if (!WIN) throw new Error("only available on Windows");
-  name = cleanName(name);
-  if (!beta.profiles[name] && Object.keys(beta.profiles).length >= 20) throw new Error("20 profiles at most");
-  const [plans, vol, dev, night] = await Promise.all([powerPlans(), volume(null, null), audioDevices(), nightLight(null)]);
-  const plan = plans.list.find(x => x.active), out = dev.ok ? dev.out.find(d => d.def) : null, sw = {};
-  for (const id of PROF_SW) sw[id] = await swGet(id);
-  beta.profiles[name] = { plan: plan ? plan.id : null, planName: plan ? plan.name : "", volume: vol.ok ? vol.level : null, mute: vol.ok ? vol.mute : null,
-    out: out ? out.id : null, outName: out ? out.name : "", night: night.ok ? night.on : null, sw, t: Date.now() };
-  saveBeta(); return profList();
-}
-async function profApply(name) {
-  const p = beta.profiles[String(name)]; if (!p) throw new Error("that profile does not exist");
-  if (!WIN) throw new Error("only available on Windows");
-  const fails = [];
-  const step = async (what, fn) => { try { const r = await fn(); if (r && r.ok === false) fails.push(what + (r.msg ? " (" + r.msg + ")" : "")); } catch (e) { fails.push(what + " (" + e.message + ")"); } };
-  if (p.plan) await step("power plan", () => powerPlan(p.plan));
-  if (p.out) await step("sound output", () => audioDefault(p.out));
-  if (p.volume != null) await step("volume", () => volume(p.volume, p.mute));
-  if (p.night != null) await step("night light", () => nightLight(p.night));
-  for (const id in p.sw || {}) if (PROF_SW.includes(id) && (await swGet(id)) !== !!p.sw[id]) await step(id, () => switchSet(id, !!p.sw[id]));
-  pushLog("profile " + name + " applied" + (fails.length ? " - not changed: " + fails.join(", ") : ""));
-  return { ok: !fails.length, fails };
-}
-function profDelete(name) { delete beta.profiles[String(name)]; saveBeta(); return profList(); }
-
-// game mode: high performance, no notification banners, chosen programs closed - and everything put back afterwards
-const HI_PLANS = ["e9a42b02-d5df-448d-aa00-03f14749eb61", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"];
-async function hiPlan() {
-  let list = (await powerPlans()).list;
-  const find = () => list.find(p => p.id === beta.game.hiPlan) || HI_PLANS.map(id => list.find(p => p.id === id)).find(Boolean);
-  if (find()) return find();
-  // windows often hides the high performance plan; a copy of it is made once and remembered
-  const r = await run("powercfg.exe", ["/duplicatescheme", HI_PLANS[1]], 15000), m = /([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/i.exec(r.out);
-  if (!m) return null;
-  beta.game.hiPlan = m[1].toLowerCase(); saveBeta();
-  list = (await powerPlans()).list; return find() || null;
-}
-async function gameMode(on) {
-  if (!WIN) return { ok: false, msg: "only available on Windows" };
-  const g = beta.game, notes = [];
-  if (on && !g.active) {
-    const st = { t: Date.now(), plan: null, toasts: false, closed: [] };
-    const cur = (await powerPlans()).list.find(p => p.active); st.plan = cur ? cur.id : null;
-    const hi = await hiPlan();
-    if (hi && !hi.active) { const r = await powerPlan(hi.id); if (!r.ok) notes.push("power plan not changed"); }
-    else if (!hi) notes.push("no high performance plan on this pc");
-    st.toasts = await swGet("toasts"); if (st.toasts) await switchSet("toasts", false);
-    if (g.apps.length) {
-      const procs = await listProcs();
-      for (const name of g.apps) {
-        const p = procs.find(x => x.name.toLowerCase() === name.toLowerCase());
-        if (!p || p.protected) continue;
-        const r = await killProc(p.name, !!g.force);
-        if (r.ok) st.closed.push({ name: p.name, path: p.path || "" }); else notes.push(p.name + " not closed");
-      }
-    }
-    g.active = st; saveBeta();
-    pushLog("game mode on" + (st.closed.length ? " - closed " + st.closed.map(c => c.name).join(", ") : "") + (notes.length ? " - " + notes.join(", ") : ""));
-  } else if (!on && g.active) {
-    const st = g.active;
-    if (st.plan) { const r = await powerPlan(st.plan).catch(e => ({ ok: false, msg: e.message })); if (!r.ok) notes.push("power plan not restored"); }
-    if (st.toasts) await switchSet("toasts", true);
-    for (const c of st.closed) if (c.path) await launchTarget(c.path).catch(() => notes.push(c.name + " not reopened"));
-    g.active = null; saveBeta();
-    pushLog("game mode off - settings restored" + (notes.length ? " - " + notes.join(", ") : ""));
-  }
-  return { ok: true, active: !!g.active, notes };
-}
-
-// gpu details from nvidia-smi (found by the temperature reader)
-const GPU_F = ["name", "temperature.gpu", "utilization.gpu", "fan.speed", "memory.used", "memory.total", "power.draw", "power.limit", "clocks.gr", "clocks.max.gr", "clocks.mem", "pstate", "driver_version"];
-async function gpuStats() {
-  if (!smiExe) { tempCache.t = 0; await readTemps(); }
-  if (!smiExe) return { ok: false, msg: "nvidia-smi was not found - this needs an nvidia graphics card and its driver" };
-  const r = await run(smiExe, ["--query-gpu=" + GPU_F.join(","), "--format=csv,noheader,nounits"], 10000);
-  if (!r.ok) return { ok: false, msg: firstLine(r.err) || "nvidia-smi did not answer" };
-  const parts = firstLine(r.out).split(",").map(s => s.trim()), o = { ok: true };
-  GPU_F.forEach((k, i) => { o[k] = parts[i] == null || /N\/A|not supported/i.test(parts[i]) ? "" : parts[i]; });
-  return o;
-}
-
-// overlay: a small always-on-top line with cpu, memory and gpu; clicks go through it
-let ovWin = null, ovT = null;
-const OV_HTML = "<!doctype html><meta charset=utf-8><body style=\"margin:0;overflow:hidden;background:transparent\"><div id=t style=\"display:inline-block;" +
-  "font:600 12px 'IBM Plex Mono',Consolas,monospace;color:#dfe6ea;background:rgba(12,15,18,.78);padding:4px 9px;border:1px solid rgba(79,195,217,.45);white-space:nowrap\">...</div>" +
-  "<script>window.set=function(s){document.getElementById('t').textContent=s}</script></body>";
-function overlayPlace() {
-  if (!ovWin || ovWin.isDestroyed()) return;
-  const b = screen.getPrimaryDisplay().bounds, w = 300, hh = 28, m = 8, c = beta.corner;
-  ovWin.setBounds({ x: c[1] === "l" ? b.x + m : b.x + b.width - w - m, y: c[0] === "t" ? b.y + m : b.y + b.height - hh - m, width: w, height: hh });
-  ovWin.webContents.executeJavaScript("document.body.style.textAlign='" + (c[1] === "l" ? "left" : "right") + "'").catch(() => {});
-}
-async function overlayTick() {
-  if (!ovWin || ovWin.isDestroyed()) return;
-  const t = await readTemps().catch(() => ({})), mem = (1 - os.freemem() / os.totalmem()) * 100;
-  const s = "CPU " + Math.round(cpuPercent()) + "%  RAM " + Math.round(mem) + "%" +
-    (t.gpuUse != null ? "  GPU " + Math.round(t.gpuUse) + "%" : "") + (t.gpu != null ? " " + Math.round(t.gpu) + "°C" : "");
-  if (ovWin && !ovWin.isDestroyed()) ovWin.webContents.executeJavaScript("window.set&&set(" + JSON.stringify(s) + ")").catch(() => {});
-}
-function overlayApply() {
-  if (!beta.on.overlay) { clearInterval(ovT); ovT = null; if (ovWin && !ovWin.isDestroyed()) ovWin.destroy(); ovWin = null; return; }
-  if (!ovWin || ovWin.isDestroyed()) {
-    ovWin = new BrowserWindow({ width: 300, height: 28, frame: false, transparent: true, resizable: false, movable: false, focusable: false, skipTaskbar: true,
-      alwaysOnTop: true, show: false, hasShadow: false, backgroundColor: "#00000000", webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
-    ovWin.setAlwaysOnTop(true, "screen-saver"); ovWin.setIgnoreMouseEvents(true);
-    ovWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(OV_HTML));
-    ovWin.webContents.once("did-finish-load", () => { overlayPlace(); overlayTick(); if (ovWin && !ovWin.isDestroyed()) ovWin.showInactive(); });
-    ovWin.on("closed", () => { ovWin = null; });
-  } else overlayPlace();
-  if (!ovT) ovT = setInterval(overlayTick, 1000);
-}
-
-// screens: brightness of each screen (ddc/ci), and main screen only / duplicate / extend
-async function monitors(which, set) {
-  if (!WIN) return { ok: false, msg: "only available on Windows" };
-  const w = Number.isInteger(which) ? which : -1, s = set != null && isFinite(set) ? pct(set) : -1;
-  const r = await psCtl("[NdC.Mon]::Run(" + w + ", " + s + ")");
-  const list = r.out.split(/\r?\n/).map(l => l.split("\t")).filter(a => a.length >= 6 && /^\d+$/.test(a[0]))
-    .map(a => ({ i: Number(a[0]), main: a[1] === "1", dev: a[2].replace(/^\\\\\.\\/, ""), name: a[3] || "screen", bright: Number(a[4]), size: a[5] }));
-  if (!list.length) return { ok: false, msg: "the screens could not be read" + (r.err ? " - " + firstLine(r.err) : "") };
-  return { ok: true, list };
-}
-async function screenMode(mode) {
-  if (!WIN) return { ok: false, msg: "only available on Windows" };
-  const t = { one: 1, clone: 2, extend: 4 }[mode]; if (!t) return { ok: false, msg: "unknown mode" };
-  const r = await psCtl("'nd:' + [NdC.Mon]::Topo(" + t + ")"), m = /nd:(-?\d+)/.exec(r.out);
-  return m && m[1] === "0" ? { ok: true } : { ok: false, msg: "windows did not accept the change" + (m ? " (code " + m[1] + ")" : "") };
-}
-
-// command search: a hotkey that brings nightdeck forward with the search box open
-function registerPalKey() {
-  if (palReg) { try { globalShortcut.unregister(palReg); } catch (e) {} palReg = ""; }
-  palOk = false;
-  if (!beta.on.palette || !ACCEL.test(beta.palKey)) return;
-  try {
-    palOk = globalShortcut.register(beta.palKey, () => {
-      showAll(); if (main && !main.isDestroyed()) main.webContents.executeJavaScript("window.ndPalette&&window.ndPalette()").catch(() => {});
-    });
-    if (palOk) palReg = beta.palKey;
-  } catch (e) { palOk = false; }
-}
-
-// scheduled actions: at a time, or when a program starts
-const SCHED_ACT = ["lock", "sleep", "screenoff", "shutdown", "restart", "game-on", "game-off", "night-on", "night-off", "mute"];
-function checkRule(r) {
-  r = r || {};
-  const o = { id: String(r.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).slice(0, 20), on: r.on !== false,
-    kind: r.kind === "start" ? "start" : "time", time: String(r.time || ""), days: String(r.days || "daily"), proc: procName(r.proc), action: String(r.action || ""), last: String(r.last || "") };
-  if (o.kind === "time" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(o.time)) throw new Error("pick a time");
-  if (!["daily", "weekdays", "weekends", "once"].includes(o.days)) throw new Error("unknown days");
-  if (o.kind === "start" && !/^[\w .+\-()]{1,80}$/.test(o.proc)) throw new Error("type a program name, for example steam");
-  const okAct = SCHED_ACT.includes(o.action) || (/^profile:.{1,40}$/.test(o.action)) || (/^open:.{3,500}$/.test(o.action) && !/[\r\n]/.test(o.action));
-  if (!okAct) throw new Error("pick an action");
-  return o;
-}
-async function runAction(a, why) {
-  pushLog("scheduled: " + why + " -> " + a.replace(/^open:.*[\\/]/, "open "));
-  try {
-    if (["lock", "sleep", "screenoff"].includes(a)) return await API.power(a);
-    if (a === "shutdown" || a === "restart") {
-      try { new Notification({ title: "Nightdeck", body: (a === "shutdown" ? "Shutting down" : "Restarting") + " in one minute (" + why + "). The power tab can cancel it." }).show(); } catch (e) {}
-      return await run("shutdown.exe", [a === "shutdown" ? "/s" : "/r", "/t", "60"], 15000);
-    }
-    if (a === "game-on" || a === "game-off") return await gameMode(a === "game-on");
-    if (a === "night-on" || a === "night-off") return await nightLight(a === "night-on");
-    if (a === "mute") return await volume(null, true);
-    if (a.startsWith("profile:")) return await profApply(a.slice(8));
-    if (a.startsWith("open:")) return await launchTarget(a.slice(5));
-  } catch (e) { pushLog("scheduled action failed: " + e.message); }
-}
-const dayKey = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-function schedTick() {
-  if (!beta.on.schedule) return;
-  const now = new Date(), hm = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0"), wd = now.getDay(), stamp = dayKey(now) + " " + hm;
-  let changed = false;
-  for (const r of beta.sched) {
-    if (!r.on || r.kind !== "time" || r.time !== hm || r.last === stamp) continue;
-    if (r.days === "weekdays" && (wd === 0 || wd === 6)) continue;
-    if (r.days === "weekends" && wd !== 0 && wd !== 6) continue;
-    r.last = stamp; if (r.days === "once") r.on = false; changed = true;
-    runAction(r.action, "at " + r.time);
-  }
-  if (changed) saveBeta();
-}
-
-// one small helper reports the program in front every 5 seconds and the program list every 10 seconds
-let watchPs = null, prevSample = null, prevNames = null, lastFg = 0;
-const overSince = new Map(), lastAlert = new Map();
-function watchWanted() { return WIN && (beta.on.usage || beta.on.alerts || (beta.on.schedule && beta.sched.some(r => r.on && r.kind === "start"))); }
-function watchApply() {
-  if (!watchWanted()) { if (watchPs) { try { watchPs.kill(); } catch (e) {} watchPs = null; } return; }
-  if (watchPs) return;
-  const script = "$ErrorActionPreference='SilentlyContinue';" +
-    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NdFg { [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p); }';" +
-    "$i=0; while (Get-Process -Id " + process.pid + ") {" +
-    " $p=[uint32]0; [void][NdFg]::GetWindowThreadProcessId([NdFg]::GetForegroundWindow(), [ref]$p); $n=''; $f='';" +
-    " if ($p) { $g=Get-Process -Id $p; if ($g) { $n=$g.Name; $f=$g.Path } };" +
-    " [Console]::Out.WriteLine('F ' + $n + '|' + $f);" +
-    " if ($i % 2 -eq 0) { [Console]::Out.WriteLine('P ' + ((Get-Process | ForEach-Object { $_.Name + '|' + [int64]($_.CPU * 1000) + '|' + $_.WorkingSet64 }) -join '/')) };" +
-    " $i++; Start-Sleep -Seconds 5 }";
-  const enc = Buffer.from(script, "utf16le").toString("base64");
-  const p = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
-  watchPs = p; prevSample = prevNames = null; lastFg = 0; let buf = "";
-  p.stdout.on("data", d => {
-    buf += d; let k;
-    while ((k = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, k).trim(); buf = buf.slice(k + 1); try { watchLine(line); } catch (e) {} }
-    if (buf.length > 2000000) buf = "";
-  });
-  const gone = () => { if (watchPs === p) watchPs = null; };
-  p.on("exit", gone); p.on("error", gone);
-}
-function watchLine(line) {
-  const now = Date.now();
-  if (line.startsWith("F ")) {
-    const [name, file] = line.slice(2).split("|"), dt = lastFg ? Math.min(10, (now - lastFg) / 1000) : 5; lastFg = now;
-    if (!beta.on.usage || !name || name === "Idle") return;
-    let idle = 0; try { idle = powerMonitor.getSystemIdleTime(); } catch (e) {}
-    if (idle > 120) return; // nobody at the pc
-    const day = dayKey(new Date()), u = beta.usage[day] = beta.usage[day] || {};
-    u[name] = Math.round(((u[name] || 0) + dt) * 10) / 10;
-    if (file) beta.usagePath[name] = file;
-    const keep = Object.keys(beta.usage).sort().slice(-14); for (const d in beta.usage) if (!keep.includes(d)) delete beta.usage[d];
-    betaDirty = true;
-  } else if (line.startsWith("P ")) {
-    const map = new Map();
-    for (const it of line.slice(2).split("/")) {
-      const a = it.split("|"); if (a.length < 3 || !a[0]) continue;
-      const g = map.get(a[0]) || { cpu: 0, mem: 0 }; g.cpu += Number(a[1]) || 0; g.mem += Number(a[2]) || 0; map.set(a[0], g);
-    }
-    // programs that just started (for scheduled actions)
-    if (prevNames && beta.on.schedule) {
-      for (const r of beta.sched) {
-        if (!r.on || r.kind !== "start") continue;
-        const hit = [...map.keys()].find(n => n.toLowerCase() === r.proc.toLowerCase());
-        if (hit && !prevNames.has(hit.toLowerCase())) runAction(r.action, r.proc + " started");
-      }
-    }
-    prevNames = new Set([...map.keys()].map(n => n.toLowerCase()));
-    // heavy programs
-    if (beta.on.alerts && prevSample && now > prevSample.t) {
-      const cores = os.cpus().length || 1, s = (now - prevSample.t) / 1000, A = beta.alerts;
-      for (const [name, g] of map) {
-        if (isProtected(name) || name === "Idle") continue;
-        const before = prevSample.map.get(name), cpu = before ? Math.max(0, g.cpu - before.cpu) / 1000 / s / cores * 100 : 0;
-        const over = cpu >= A.cpu || g.mem >= A.memGb * 1073741824;
-        if (!over) { overSince.delete(name); continue; }
-        if (!overSince.has(name)) overSince.set(name, now);
-        if (now - overSince.get(name) >= A.mins * 60000 && now - (lastAlert.get(name) || 0) > 30 * 60000) {
-          lastAlert.set(name, now);
-          const what = cpu >= A.cpu ? Math.round(cpu) + "% cpu" : (g.mem / 1073741824).toFixed(1) + " GB memory";
-          const msg = name + " has used " + what + " for " + A.mins + " minute" + (A.mins > 1 ? "s" : "");
-          beta.alertLog.unshift({ t: now, msg }); beta.alertLog = beta.alertLog.slice(0, 20); betaDirty = true;
-          pushLog("alert: " + msg);
-          try { new Notification({ title: "Nightdeck", body: msg }).show(); } catch (e) {}
-        }
-      }
-      for (const n of [...overSince.keys()]) if (!map.has(n)) overSince.delete(n);
-    }
-    prevSample = { t: now, map };
-  }
-}
-async function usageGet() {
-  const days = Object.keys(beta.usage).sort().slice(-7), icons = {};
-  const names = new Set(); for (const d of days) for (const n in beta.usage[d]) names.add(n);
-  await Promise.all([...names].map(async n => { const f = beta.usagePath[n]; icons[n] = f ? await fileIcon(f) : ""; }));
-  return { on: !!beta.on.usage, today: dayKey(new Date()), days: days.map(d => ({ day: d, apps: beta.usage[d] })), icons };
-}
-function usageReset() { beta.usage = {}; beta.usagePath = {}; saveBeta(); return true; }
-function betaInit() {
-  loadBeta(); betaApply();
-  setInterval(schedTick, 15000);
-  setInterval(() => { if (betaDirty) saveBeta(); }, 60000);
-  if (main) main.on("closed", () => { if (ovWin && !ovWin.isDestroyed()) ovWin.destroy(); });
-}
-
-// ---- BETA: remote control for Claude ----
-// While switched on, Nightdeck reads request files from the "remote" folder next to Nightdeck.exe,
-// runs them, and writes the answers back. Only the actions listed below can be used: reading values
-// and changes that can be undone. Nothing here starts programs, ends programs, deletes files or shuts down.
-// It switches itself off after one hour.
-const REMOTE_READ = ["sys", "temps", "sysExtra", "procs", "net", "netcheck", "ping", "netRate", "netDetails", "powerPlans", "settingsGet",
-  "switchesGet", "audioDevices", "appVolumes", "drives", "startupList", "cleanScan", "cleanCats", "betaGet", "gpuStats", "usageGet", "installedApps"];
-const REMOTE_SET = ["volume", "brightness", "powerPlan", "keepAwake", "nightLight", "appVolume", "audioDefault", "micMute", "switchSet", "radioSet", "monitors", "profApply"];
-const REMOTE_MS = 3600 * 1000;
-let remoteT = null, remoteBusy = false;
-const remoteDir = () => path.join(path.dirname(process.execPath), "remote");
-function remoteStatus() {
-  try {
-    fs.mkdirSync(remoteDir(), { recursive: true });
-    fs.writeFileSync(path.join(remoteDir(), "status.json"), JSON.stringify({ on: !!beta.on.remote, until: beta.remoteUntil || 0, version: "nightdeck-remote 1",
-      read: REMOTE_READ, set: REMOTE_SET, ui: ["ui.read <tab>", "ui.log"], t: Date.now() }, null, 1));
-  } catch (e) {}
-}
-function remoteApply() {
-  if (beta.on.remote && !(beta.remoteUntil > Date.now())) { beta.on.remote = false; saveBeta(); pushLog("remote control switched itself off"); }
-  remoteStatus();
-  if (!beta.on.remote) { clearInterval(remoteT); remoteT = null; return; }
-  if (!remoteT) remoteT = setInterval(remoteTick, 500);
-}
-const withTimeout = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error("took longer than " + ms / 1000 + " s")), ms))]);
-async function remoteUi(name, args) {
-  if (name === "ui.log") return history.slice(-Math.max(1, Math.min(200, Number(args[0]) || 50))).map(m => m.t + " " + m.text);
-  const tab = String(args[0] || ""); if (!/^[a-z]{2,20}$/.test(tab)) throw new Error("unknown tab");
-  if (!main || main.isDestroyed()) throw new Error("the window is closed");
-  const wait = Math.max(200, Math.min(15000, Number(args[1]) || 2500));
-  return main.webContents.executeJavaScript("new Promise(function(ok){var p=document.querySelector('[data-pane=\"" + tab + "\"]');if(!p){ok(null);return}panel.select('" + tab +
-    "');setTimeout(function(){ok(p.innerText)}," + wait + ")})");
-}
-async function remoteCall(c) {
-  const name = String(c && c.name || ""), args = Array.isArray(c && c.args) ? c.args.slice(0, 5) : [];
-  if (name.startsWith("ui.")) { if (name !== "ui.read" && name !== "ui.log") throw new Error("unknown ui action"); return remoteUi(name, args); }
-  if (!REMOTE_READ.includes(name) && !REMOTE_SET.includes(name)) throw new Error("not allowed: " + name);
-  if (REMOTE_SET.includes(name)) pushLog("remote: " + name + " " + JSON.stringify(args).slice(0, 80));
-  return API[name](...args);
-}
-async function remoteTick() {
-  if (remoteBusy) return;
-  if (!(beta.remoteUntil > Date.now())) { remoteApply(); return; }
-  let all; try { all = fs.readdirSync(remoteDir()); } catch (e) { return; }
-  for (const f of all) if (/^res-[\w-]{1,40}\.json$/.test(f)) { try { const p = path.join(remoteDir(), f); if (Date.now() - fs.statSync(p).mtimeMs > 600000) fs.unlinkSync(p); } catch (e) {} } // old answers
-  const files = all.filter(f => /^req-[\w-]{1,40}\.json$/.test(f)).sort();
-  if (!files.length) return;
-  remoteBusy = true;
-  try {
-    for (const f of files.slice(0, 5)) {
-      const file = path.join(remoteDir(), f), id = f.slice(4, -5); let req = null, out;
-      try { req = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { if (Date.now() - fs.statSync(file).mtimeMs < 3000) continue; } // may still be written
-      try { fs.unlinkSync(file); } catch (e) {}
-      if (!req) out = { id, error: "the request is not valid json" };
-      else {
-        const calls = [].concat(req.calls || []).slice(0, 30), results = [];
-        for (const c of calls) {
-          const t = Date.now();
-          try { results.push({ name: c.name, ok: true, ms: 0, value: await withTimeout(Promise.resolve(remoteCall(c)), 45000) }); }
-          catch (e) { results.push({ name: c && c.name, ok: false, error: String(e && e.message || e) }); }
-          results[results.length - 1].ms = Date.now() - t;
-        }
-        out = { id, t: Date.now(), results };
-      }
-      const tmp = path.join(remoteDir(), "res-" + id + ".tmp");
-      fs.writeFileSync(tmp, JSON.stringify(out, (k, v) => typeof v === "string" && v.startsWith("data:image") ? "(picture)" : v, 1));
-      fs.renameSync(tmp, path.join(remoteDir(), "res-" + id + ".json"));
-    }
-  } catch (e) { pushLog("remote: " + e.message); }
-  remoteBusy = false;
 }
 
 const LOGIN_ARGS = ["--startup"];
@@ -2049,7 +1608,6 @@ const API = {
     return true;
   },
   capShot, capGrab, capSave, capSources, capList, capDo, capSet, recStart, recChunk, recStop,
-  betaGet, betaSet, profSave, profApply, profDelete, gameMode, gpuStats, monitors, screenMode, usageGet, usageReset,
   async openShots() { fs.mkdirSync(shotsDir(), { recursive: true }); const err = await shell.openPath(shotsDir()); if (err) throw new Error(err); return true; }
 };
 ipcMain.handle("nd-api", async (event, name, ...args) => {
@@ -2069,6 +1627,6 @@ app.setAppUserModelId("Nightdeck.Utility");
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", showAll);
 app.on("before-quit", () => { quitting = true; });
-app.on("will-quit", () => { try { globalShortcut.unregisterAll(); } catch (e) {} try { if (netPs) netPs.kill(); } catch (e) {} try { if (watchPs) watchPs.kill(); } catch (e) {} if (betaDirty) saveBeta(); });
-app.whenReady().then(() => { loadSettings(); createWindows(); applyTray(); capLoad(); applyHotkey(); clipLoad(); setInterval(pollClipboard, 1000); betaInit(); });
+app.on("will-quit", () => { try { globalShortcut.unregisterAll(); } catch (e) {} try { if (netPs) netPs.kill(); } catch (e) {} });
+app.whenReady().then(() => { loadSettings(); createWindows(); applyTray(); capLoad(); applyHotkey(); clipLoad(); setInterval(pollClipboard, 1000); });
 app.on("window-all-closed", () => app.quit());

@@ -290,6 +290,11 @@ v2.52  Clicking "mvhmuod" opens github.com/mvhmuod in the browser;
        it glows blue on hover.
 v2.53  Credit changed to "(c) 2026 mvhmuod" (the name still links to
        GitHub).
+v2.54  Public version
+       - The BETA tab (test features: profiles, game mode, gpu details,
+         overlay, screens, command search, schedule, alerts, usage time and
+         remote control) is not part of the public app.
+       - Screenshots and README updated, contributing notes added.
        >> Current version.
 
 

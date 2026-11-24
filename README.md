@@ -4,7 +4,7 @@ A dark control-panel style PC utility for Windows, built with Electron. One wind
 
 ![Nightdeck system tab](docs/screenshots/system.png)
 
-Current version: **v2.53**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
+Current version: **v2.54**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
 
 ## What it does
 
@@ -21,7 +21,6 @@ Current version: **v2.53**. The full history is in [CHANGELOG.txt](CHANGELOG.txt
 | capture | Screenshots of a screen, all screens, a window or a region, with delay, clipboard copy, mark-up editor, hotkey, recent list, and screen recording |
 | tools | Standard, scientific, graphing and programmer calculators with history and memory, multi-function graphing with zoom, date calculation, percent and VAT, unit price comparison, password generator, text tools, a converter with 13 categories and favourites, colour picker with screen picking and palette |
 | control | Volume, sound devices and per-program volume, brightness, night light, Windows switches, Wi-Fi and Bluetooth, wallpaper, drives, cleanup, Windows settings shortcuts, and Nightdeck options with backup and restore |
-| BETA | Test features with on/off switches: profiles, game mode, GPU details, an always-on-top overlay, per-screen brightness, command search (Ctrl+Alt+P / Ctrl+K), scheduled actions, heavy program alerts, usage time, and a safe remote control for Claude |
 
 Bars are blue up to 50%, red above 50% and gold at 100%. The footer shows "© 2026 mvhmuod" next to the version; the name links to this GitHub profile.
 
@@ -31,7 +30,7 @@ Bars are blue up to 50%, red above 50% and gold at 100%. The footer shows "© 20
 | --- | --- |
 | `utility/` | The current app (v2.x). This is the code Electron runs. |
 | `original/` | The first panel app, finished at v1.21 and kept unchanged. |
-| `sdk/` | The reusable panel kit (plain HTML, CSS, JavaScript) the apps grew out of. |
+| `sdk/` | The reusable panel kit (plain HTML, CSS, JavaScript) the apps grew out of. A cleaned-up version is published as [nightdeck-ui](https://github.com/mvhmuod/nightdeck-ui). |
 | `docs/screenshots/` | Pictures of the tabs. |
 
 Inside `utility/`:
@@ -59,7 +58,7 @@ The packaged program files (`Nightdeck.exe` and the Electron runtime) are not in
 
 ## Screenshots
 
-![All twelve tabs](docs/screenshots/overview.png)
+![All eleven tabs](docs/screenshots/overview.png)
 
 | | |
 | --- | --- |
@@ -68,9 +67,16 @@ The packaged program files (`Nightdeck.exe` and the Electron runtime) are not in
 | ![clipboard](docs/screenshots/clipboard.png) | ![notes](docs/screenshots/notes.png) |
 | ![timers](docs/screenshots/timers.png) | ![capture](docs/screenshots/capture.png) |
 | ![tools](docs/screenshots/tools.png) | ![control](docs/screenshots/control.png) |
-| ![BETA](docs/screenshots/beta.png) | |
 
-All pictures are from v2.53 with made-up sample values (computer name, addresses and hardware are examples), so they show no real PC.
+All pictures are from v2.54 with made-up sample values (computer name, addresses and hardware are examples), so they show no real PC.
+
+## Contributing
+
+Ideas, bug reports and pull requests are welcome.
+
+- Found a bug or have an idea? [Open an issue](https://github.com/mvhmuod/nightdeck/issues).
+- Want to change something? Fork the repo, make your change in `utility/`, try it with `npx electron .`, and open a pull request. Please bump the version in `utility/index.html` and add a line to `CHANGELOG.txt`.
+- Keep the style: plain JavaScript, no frameworks, short lowercase labels, and everything that changes Windows asks first or can be undone.
 
 ## License
 

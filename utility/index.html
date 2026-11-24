@@ -63,8 +63,6 @@ body.nd-page{-webkit-app-region:drag;user-select:none}
 /* Tabs are only as big as their text, so the glow starts on the text itself */
 .nd-tabs{align-items:center;gap:18px}
 .nd-tab{padding:2px 4px;border:0}
-/* The beta tab is written in capitals */
-.nd-tab[data-tab="beta"]{text-transform:uppercase}
 </style>
 </head>
 <body class="nd-page">
@@ -80,7 +78,7 @@ body.nd-page{-webkit-app-region:drag;user-select:none}
 // One tab per tool. "custom" areas are filled in by tools.js.
 const panel = Nightdeck.create("#app", {
   title: "Nightdeck",
-  version: "v2.53", // bump this with every change
+  version: "v2.54", // bump this with every change
   credit: { text: "\u00a9 2026 ", name: "mvhmuod", url: "https://github.com/mvhmuod" },
   console: false,  // the console lives in its own window
   onLog(msg) { if (window.nightdeckWindow) window.nightdeckWindow.log(msg); },
@@ -107,8 +105,7 @@ const panel = Nightdeck.create("#app", {
     timers: [{custom:"timers"}],
     capture: [{custom:"capture"}],
     tools: [{custom:"tools"}],
-    control: [{custom:"control"}],
-    beta: [{custom:"beta"}]
+    control: [{custom:"control"}]
   }
 });
 </script>

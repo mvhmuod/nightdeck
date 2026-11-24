@@ -193,23 +193,3 @@ input[type=time].nd-input,input[type=number].nd-input{color-scheme:dark}
 .nd-tr.nd-dev{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) 126px}
 .nd-tr.nd-dev>span{text-align:left!important; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 [data-pane="network"] .nd-custom{gap:9px}
-/* beta tab */
-.nd-bsec{display:flex; flex-direction:column; gap:8px}
-.nd-tr.nd-prof{grid-template-columns:minmax(0,.6fr) minmax(0,1.4fr) auto}
-.nd-tr.nd-prof>span{text-align:left!important; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.nd-srow{justify-content:space-between; flex-wrap:nowrap}
-.nd-srow .nd-btn{padding:1px 8px}
-.nd-urow{display:grid; grid-template-columns:16px minmax(0,150px) minmax(0,1fr) 70px; gap:8px; align-items:center; padding:2px 0; font:500 12px "IBM Plex Mono",ui-monospace,monospace; color:#aeb7be}
-.nd-urow span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.nd-urow output{text-align:right; color:#dfe6ea}
-.nd-uicon{width:16px; height:16px; display:block}
-.nd-ubar{height:6px; background:#2b333a; border:1px solid #000}
-.nd-ubar i{display:block; height:100%; background:#4fc3d9}
-.nd-pal-wrap{position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:1000; display:flex; justify-content:center; align-items:flex-start; padding-top:70px; -webkit-app-region:no-drag}
-.nd-pal-box{width:min(520px,90%); background:#15191d; border:1px solid #4fc3d9; box-shadow:0 8px 30px rgba(0,0,0,.6); padding:8px; display:flex; flex-direction:column; gap:6px}
-.nd-pal-box .nd-input{width:100%; box-sizing:border-box; font-size:13px; padding:7px 9px}
-.nd-pal-list{max-height:320px; overflow-y:auto; scrollbar-width:none}
-.nd-pal-list::-webkit-scrollbar{display:none}
-.nd-pal-item{display:flex; justify-content:space-between; gap:10px; padding:5px 8px; cursor:pointer; font:500 12px "IBM Plex Mono",ui-monospace,monospace; color:#aeb7be}
-.nd-pal-item small{color:#5f6b74}
-.nd-pal-item.nd-sel,.nd-pal-item:hover{color:#4fc3d9; text-shadow:0 0 6px rgba(79,195,217,.55)}

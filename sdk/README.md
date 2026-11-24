@@ -4,14 +4,13 @@ A small dark control-panel UI (sidebar tabs, checkboxes, sliders, presets, conso
 
 ## Open it
 
-Double-click `index.html`. It opens in your browser. `examples/demo.html` shows the panel driving something on the page.
+Double-click `index.html`. It opens in your browser.
 
 ## Files
 
 - `nightdeck.js` - the library (`Nightdeck.create`)
 - `nightdeck.css` - the styles; colours are the `--nd-*` variables at the top
 - `index.html` - demo
-- `examples/demo.html` - second demo with a live preview
 
 ## Use it in your own page
 
