@@ -24,7 +24,7 @@
       '<h1 class="nd-title">' + esc(o.title) + '</h1><div class="nd-tabs" role="tablist"></div></div>' +
       '<div class="nd-panes"></div></div><div class="nd-foot"><button class="nd-btn" data-act="reset">reset</button>' +
       Object.keys(o.presets).map(p => '<button class="nd-btn" data-preset="' + esc(p) + '">' + esc(p) + '</button>').join("") +
-      '<small>' + esc(o.version) + '</small></div></section>' +
+      '<small>' + (o.credit ? '<span class="nd-credit">' + esc(o.credit) + '</span>' : '') + esc(o.version) + '</small></div></section>' +
       (o.console ? '<section class="nd-win nd-console"><div class="nd-inner"><h2 class="nd-ctitle">Console</h2><div class="nd-log" aria-live="polite"></div></div></section>' : "");
 
     const tabsEl = host.querySelector(".nd-tabs"), panesEl = host.querySelector(".nd-panes"), logEl = host.querySelector(".nd-log");
