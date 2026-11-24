@@ -19,12 +19,19 @@
     const names = Object.keys(o.tabs);
 
     host.classList.add("nd-root");
+    // credit line next to the version: plain text, or { text, name, url } where the name links to the url
+    function credit(c) {
+      if (!c) return "";
+      if (typeof c === "string") return '<span class="nd-credit">' + esc(c) + '</span>';
+      const name = /^https:\/\//.test(c.url || "") ? '<a href="' + esc(c.url) + '" target="_blank" rel="noopener" title="' + esc(c.url) + '">' + esc(c.name) + '</a>' : esc(c.name);
+      return '<span class="nd-credit">' + esc(c.text || "") + name + '</span>';
+    }
     host.innerHTML =
       '<section class="nd-win nd-menu"><div class="nd-body"><div class="nd-side">' +
       '<h1 class="nd-title">' + esc(o.title) + '</h1><div class="nd-tabs" role="tablist"></div></div>' +
       '<div class="nd-panes"></div></div><div class="nd-foot"><button class="nd-btn" data-act="reset">reset</button>' +
       Object.keys(o.presets).map(p => '<button class="nd-btn" data-preset="' + esc(p) + '">' + esc(p) + '</button>').join("") +
-      '<small>' + (o.credit ? '<span class="nd-credit">' + esc(o.credit) + '</span>' : '') + esc(o.version) + '</small></div></section>' +
+      '<small>' + credit(o.credit) + esc(o.version) + '</small></div></section>' +
       (o.console ? '<section class="nd-win nd-console"><div class="nd-inner"><h2 class="nd-ctitle">Console</h2><div class="nd-log" aria-live="polite"></div></div></section>' : "");
 
     const tabsEl = host.querySelector(".nd-tabs"), panesEl = host.querySelector(".nd-panes"), logEl = host.querySelector(".nd-log");
