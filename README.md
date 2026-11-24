@@ -67,6 +67,10 @@ The packaged program files (`Nightdeck.exe` and the Electron runtime) are not in
 
 These six pictures are from v2.18 on a test machine, so some readings are empty and the newer title animation is missing.
 
-## Status
+## License
 
-A personal project by mvhmuod. No licence has been chosen yet, so all rights are reserved.
+© 2026 mvhmuod ([github.com/mvhmuod](https://github.com/mvhmuod)).
+
+Nightdeck is free software under the **GNU General Public License v3.0** (see [LICENSE](LICENSE)). You may use, study, change and share it, but any copy or changed version you share must also be released under GPL-3.0, with its source code and this copyright notice.
+
+The Electron runtime that the packaged app ships with keeps its own MIT license.
