@@ -6,6 +6,16 @@ A dark control-panel style PC utility for Windows, built with Electron. One wind
 
 Current version: **v2.54**. The full history is in [CHANGELOG.txt](CHANGELOG.txt).
 
+## Download
+
+**[⬇ Download Nightdeck for Windows (x64)](https://github.com/mvhmuod/nightdeck/releases/latest)**: get `Nightdeck-vX.XX-win-x64.zip` from the latest release.
+
+1. Unzip the file anywhere (for example `Documents\Nightdeck`).
+2. Run `Nightdeck.exe`. Nothing is installed and it runs without admin rights. A few actions (such as changing some Windows settings) ask for admin permission when you use them.
+3. Windows SmartScreen may warn because the app is not signed: click **More info**, then **Run anyway**.
+
+To build it from source instead, see [Running it](#running-it).
+
 ## What it does
 
 | Tab | What is in it |
@@ -54,7 +64,7 @@ npx electron .
 
 Most system features (temperatures, volume, Windows switches, network details) only work on Windows. On other systems those readings say so.
 
-The packaged program files (`Nightdeck.exe` and the Electron runtime) are not in this repository because of their size.
+The packaged program files (`Nightdeck.exe` and the Electron runtime) are not in this repository because of their size. They are in the [release download](https://github.com/mvhmuod/nightdeck/releases/latest).
 
 ## Screenshots
 
