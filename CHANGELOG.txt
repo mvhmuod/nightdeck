@@ -288,6 +288,8 @@ v2.50  Remote control: "one more hour" did not add time (it reset the
 v2.51  "made by mvhmuod" shown next to the version, bottom right.
 v2.52  Clicking "mvhmuod" opens github.com/mvhmuod in the browser;
        it glows blue on hover.
+v2.53  Credit changed to "(c) 2026 mvhmuod" (the name still links to
+       GitHub).
        >> Current version.
 
 
